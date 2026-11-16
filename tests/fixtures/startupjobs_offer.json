@@ -1,0 +1,11 @@
+{
+  "@context": "/api/contexts/Offer",
+  "@id": "/api/offers/108997",
+  "@type": "Offer",
+  "id": "108997",
+  "state": "published",
+  "publishedAt": "2026-10-30T11:12:31.000Z",
+  "createdAt": "2026-10-30T08:29:47.000Z",
+  "name": {"cs": "Hledáme vývojáře do týmu"},
+  "description": {"cs": "<p>Ve Veroc rozšiřujeme tým.</p><ul><li>full-stack</li><li>AI</li></ul>"}
+}
