@@ -28,4 +28,4 @@ data/
 .mcp.json
 .claude/settings.local.json
 .DS_Store
-.CLAUDE.md
+CLAUDE.md
