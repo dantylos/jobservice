@@ -2,10 +2,17 @@ from datetime import date
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
+import pytest
 
 from jobservice.http import HttpClient
 from jobservice.models import SearchFilter
-from jobservice.sources.jobscz import JobsCz, parse_detail, parse_search, search_url
+from jobservice.sources.jobscz import (
+    JobsCz,
+    parse_detail,
+    parse_search,
+    parse_tags,
+    search_url,
+)
 
 
 def test_search_url():
@@ -84,3 +91,58 @@ def test_collect(fixture):
     assert b.description_text is None
     assert b.published_at is None
     assert all("2001498258" not in str(u) for u in requested)
+
+
+def test_parse_search_tags(fixture):
+    cards, _ = parse_search(fixture("jobscz_search.html"), page=1)
+    first, second = cards
+    assert (first.salary_min, first.salary_max, first.salary_period) == (50000, 70000, "month")
+    assert first.work_mode == "remote"
+    assert (second.salary_min, second.work_mode) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("tags", "expected"),
+    [
+        (["od 40 000 Kč"], {"salary_min": 40000, "salary_max": None, "salary_period": "month"}),
+        (["250 – 400 Kč/hod"], {"salary_min": 250, "salary_max": 400, "salary_period": "hour"}),
+        (["Možnost občasné práce z domova"], {"work_mode": "hybrid"}),
+        (["Odpověď do 2 týdnů", "Nové", "21"], {}),
+    ],
+)
+def test_parse_tags(tags, expected):
+    assert parse_tags(tags) == expected
+
+
+def test_collect_remote_pass_keeps_only_remote(fixture):
+    searched = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/prace/"):
+            searched.append(request.url.path)
+            return httpx.Response(200, text=fixture("jobscz_search.html"))
+        return httpx.Response(200, text=fixture("jobscz_detail_body.html"))
+
+    with HttpClient(delay=0, transport=httpx.MockTransport(handler)) as http:
+        flt = SearchFilter(keywords=["ai"], city="Brno", max_pages=1, include_remote=True)
+        vacancies = list(JobsCz(http).collect(flt, skip_detail=set()))
+
+    assert searched == ["/prace/brno/", "/prace/"]
+    # both cards come from the Brno pass; the national pass adds nothing new
+    assert [v.external_id for v in vacancies] == ["2001367610", "2001498258"]
+    assert vacancies[0].salary_currency == "CZK"
+
+
+def test_collect_remote_pass_skips_non_remote(fixture):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/prace/brno/":
+            return httpx.Response(200, text="<html></html>")
+        if request.url.path == "/prace/":
+            return httpx.Response(200, text=fixture("jobscz_search.html"))
+        return httpx.Response(200, text=fixture("jobscz_detail_body.html"))
+
+    with HttpClient(delay=0, transport=httpx.MockTransport(handler)) as http:
+        flt = SearchFilter(keywords=["ai"], city="Brno", max_pages=1, include_remote=True)
+        vacancies = list(JobsCz(http).collect(flt, skip_detail=set()))
+
+    assert [v.external_id for v in vacancies] == ["2001367610"]  # only the remote card

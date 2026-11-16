@@ -9,6 +9,7 @@ Detail pages come in three flavours, tried in this order:
 
 import json
 import logging
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date
@@ -32,6 +33,31 @@ class Card:
     company: str | None
     city: str | None
     date_raw: str | None
+    work_mode: str | None = None
+    salary_min: float | None = None
+    salary_max: float | None = None
+    salary_period: str | None = None
+
+
+# Card tags: "Práce převážně z domova" (mostly remote), "Možnost občasné práce z domova".
+_MODE_TAGS = {"prace prevazne z domova": "remote", "moznost obcasne prace z domova": "hybrid"}
+_SALARY = re.compile(r"^(?:od )?(\d[\d ]*)(?: [–-] (\d[\d ]*))? Kč(?: ?/ ?(hod|měs))?", re.I)
+
+
+def parse_tags(tags: list[str]) -> dict:
+    out: dict = {}
+    for raw in tags:
+        tag = re.sub(r"[\u200d\u202f\xa0\s]+", " ", raw).strip()
+        mode = _MODE_TAGS.get(slugify(tag).replace("-", " "))
+        if mode:
+            out["work_mode"] = mode
+        m = _SALARY.match(tag)
+        if m:
+            low = float(m.group(1).replace(" ", ""))
+            high = float(m.group(2).replace(" ", "")) if m.group(2) else None
+            out["salary_min"], out["salary_max"] = low, high
+            out["salary_period"] = "hour" if (m.group(3) or "").lower() == "hod" else "month"
+    return out
 
 
 @dataclass(slots=True)
@@ -63,6 +89,7 @@ def parse_search(html: str, page: int) -> tuple[list[Card], bool]:
         company = art.css_first(".SearchResultCard__footerItem span[translate='no']")
         city = art.css_first("[data-test='serp-locality']")
         status = art.css_first("[data-test-ad-status]")
+        tags = [t.text() for t in art.css(".SearchResultCard__body .Tag")]
         cards.append(
             Card(
                 id=link.attributes["data-jobad-id"],
@@ -70,6 +97,7 @@ def parse_search(html: str, page: int) -> tuple[list[Card], bool]:
                 company=clean(company.text()) if company else None,
                 city=clean(city.text()) if city else None,
                 date_raw=clean(status.text()) if status else None,
+                **parse_tags(tags),
             )
         )
     has_next = tree.css_first(f"a[href*='page={page + 1}']") is not None
@@ -109,18 +137,24 @@ class JobsCz:
 
     def collect(self, flt: SearchFilter, skip_detail: set[str]) -> Iterator[Vacancy]:
         seen: set[str] = set()
+        # Jobs.cz has no URL filter for remote work, so the remote pass searches the
+        # whole country and keeps only cards tagged as mostly-remote.
+        passes = [(flt.city, False)]
+        if flt.include_remote and flt.city:
+            passes.append((None, True))
         for keyword in flt.keywords:
-            for page in range(1, flt.max_pages + 1):
-                url = search_url(keyword, flt.city, page)
-                log.info("jobs.cz: %s", url)
-                cards, has_next = parse_search(self.http.get(url).text, page)
-                for card in cards:
-                    if card.id in seen:
-                        continue
-                    seen.add(card.id)
-                    yield self._vacancy(card, fetch_detail=card.id not in skip_detail)
-                if not has_next or not cards:
-                    break
+            for city, remote_only in passes:
+                for page in range(1, flt.max_pages + 1):
+                    url = search_url(keyword, city, page)
+                    log.info("jobs.cz: %s", url)
+                    cards, has_next = parse_search(self.http.get(url).text, page)
+                    for card in cards:
+                        if card.id in seen or (remote_only and card.work_mode != "remote"):
+                            continue
+                        seen.add(card.id)
+                        yield self._vacancy(card, fetch_detail=card.id not in skip_detail)
+                    if not has_next or not cards:
+                        break
 
     def _vacancy(self, card: Card, fetch_detail: bool) -> Vacancy:
         v = Vacancy(
@@ -132,6 +166,11 @@ class JobsCz:
             city=card.city,
             published_raw=card.date_raw,
             published_at=parse_czech_date(card.date_raw, self.today),
+            work_mode=card.work_mode,
+            salary_min=card.salary_min,
+            salary_max=card.salary_max,
+            salary_currency="CZK" if card.salary_min else None,
+            salary_period=card.salary_period,
         )
         if fetch_detail:
             try:

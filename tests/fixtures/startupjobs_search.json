@@ -8,23 +8,84 @@
       "@id": "/api/offers/108997",
       "@type": "SearchOffer",
       "id": 108997,
-      "name": {"cs": "Hledáme vývojáře do týmu"},
-      "slug": {"cs": "hledame-vyvojare-do-tymu"},
+      "name": {
+        "cs": "Hledáme vývojáře do týmu"
+      },
+      "slug": {
+        "cs": "hledame-vyvojare-do-tymu"
+      },
       "locations": [
-        {"name": {"cs": "Liberec, Česko"}, "place": {"cs": "Liberec"}},
-        {"name": {"cs": "Turnov, Česko"}, "place": {"cs": "Turnov"}},
-        {"name": {"cs": "Liberec, Česko"}, "place": {"cs": "Liberec"}}
+        {
+          "name": {
+            "cs": "Liberec, Česko"
+          },
+          "place": {
+            "cs": "Liberec"
+          }
+        },
+        {
+          "name": {
+            "cs": "Turnov, Česko"
+          },
+          "place": {
+            "cs": "Turnov"
+          }
+        },
+        {
+          "name": {
+            "cs": "Liberec, Česko"
+          },
+          "place": {
+            "cs": "Liberec"
+          }
+        }
       ],
-      "company": {"@type": "SearchOfferCompany", "name": "Veroc Brands Group a.s.", "slug": "veroc"}
+      "company": {
+        "@type": "SearchOfferCompany",
+        "name": "Veroc Brands Group a.s.",
+        "slug": "veroc"
+      },
+      "salary": {
+        "min": 3500000,
+        "max": 9000000,
+        "currency": "CZK",
+        "period": "month"
+      },
+      "seniorities": [
+        "junior",
+        "medior"
+      ],
+      "locationPreferences": [
+        "hybrid",
+        "remote"
+      ]
     },
     {
       "@id": "/api/offers/108995",
       "@type": "SearchOffer",
       "id": 108995,
-      "name": {"cs": "", "en": "Business Developer"},
-      "slug": {"cs": "", "en": "business-developer"},
-      "locations": [{"name": {"cs": "Praha, Česko"}, "place": null}],
-      "company": {"name": "PragueBest"}
+      "name": {
+        "cs": "",
+        "en": "Business Developer"
+      },
+      "slug": {
+        "cs": "",
+        "en": "business-developer"
+      },
+      "locations": [
+        {
+          "name": {
+            "cs": "Praha, Česko"
+          },
+          "place": null
+        }
+      ],
+      "company": {
+        "name": "PragueBest"
+      },
+      "salary": null,
+      "seniorities": [],
+      "locationPreferences": []
     }
   ],
   "view": {

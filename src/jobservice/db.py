@@ -1,5 +1,5 @@
 import sqlite3
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,26 +25,41 @@ CREATE TABLE IF NOT EXISTS vacancies (
 CREATE INDEX IF NOT EXISTS idx_vacancies_published ON vacancies (published_at);
 """
 
+_FIELDS = [f.name for f in fields(Vacancy)]
+_ALWAYS_UPDATE = {"title", "url"}
+
 # Fields that may be missing on a later run (e.g. description skipped because it's
 # already stored) keep their previous value instead of being overwritten with NULL.
-_UPSERT = """
-INSERT INTO vacancies (source, external_id, title, company, city, url,
-    description_text, description_html, published_at, published_raw,
-    first_seen_at, last_seen_at)
-VALUES (:source, :external_id, :title, :company, :city, :url,
-    :description_text, :description_html, :published_at, :published_raw,
-    :now, :now)
-ON CONFLICT (source, external_id) DO UPDATE SET
-    title            = excluded.title,
-    company          = COALESCE(excluded.company, company),
-    city             = COALESCE(excluded.city, city),
-    url              = excluded.url,
-    description_text = COALESCE(excluded.description_text, description_text),
-    description_html = COALESCE(excluded.description_html, description_html),
-    published_at     = COALESCE(excluded.published_at, published_at),
-    published_raw    = COALESCE(excluded.published_raw, published_raw),
-    last_seen_at     = excluded.last_seen_at
-"""
+_UPSERT = (
+    f"INSERT INTO vacancies ({', '.join(_FIELDS)}, first_seen_at, last_seen_at) "
+    f"VALUES ({', '.join(':' + f for f in _FIELDS)}, :now, :now) "
+    "ON CONFLICT (source, external_id) DO UPDATE SET "
+    + ", ".join(
+        f"{f} = excluded.{f}" if f in _ALWAYS_UPDATE else f"{f} = COALESCE(excluded.{f}, {f})"
+        for f in _FIELDS
+        if f not in ("source", "external_id")
+    )
+    + ", last_seen_at = excluded.last_seen_at"
+)
+
+
+STATUSES = ("new", "apply", "later", "skip")
+
+# Columns added after the first release; connect() adds them to older databases.
+_MIGRATIONS = {
+    "status": "ALTER TABLE vacancies ADD COLUMN status TEXT NOT NULL DEFAULT 'new'",
+    "status_reason": "ALTER TABLE vacancies ADD COLUMN status_reason TEXT",
+    "status_at": "ALTER TABLE vacancies ADD COLUMN status_at TEXT",
+    "salary_min": "ALTER TABLE vacancies ADD COLUMN salary_min REAL",
+    "salary_max": "ALTER TABLE vacancies ADD COLUMN salary_max REAL",
+    "salary_currency": "ALTER TABLE vacancies ADD COLUMN salary_currency TEXT",
+    "salary_period": "ALTER TABLE vacancies ADD COLUMN salary_period TEXT",
+    "work_mode": "ALTER TABLE vacancies ADD COLUMN work_mode TEXT",
+    "seniority": "ALTER TABLE vacancies ADD COLUMN seniority TEXT",
+    "languages": "ALTER TABLE vacancies ADD COLUMN languages TEXT",
+    # Why the hard filters rejected this vacancy (None = passed). Recomputed by filters.py.
+    "filter_reason": "ALTER TABLE vacancies ADD COLUMN filter_reason TEXT",
+}
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -53,6 +68,12 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(vacancies)")}
+    for column, ddl in _MIGRATIONS.items():
+        if column not in columns:
+            conn.execute(ddl)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_vacancies_status ON vacancies (status)")
+    conn.commit()
     return conn
 
 
@@ -70,7 +91,94 @@ def upsert(conn: sqlite3.Connection, vacancy: Vacancy) -> bool:
         "SELECT 1 FROM vacancies WHERE source = ? AND external_id = ?",
         (vacancy.source, vacancy.external_id),
     ).fetchone()
-    now = datetime.now(UTC).isoformat(timespec="seconds")
-    conn.execute(_UPSERT, {**asdict(vacancy), "now": now})
+    conn.execute(_UPSERT, {**asdict(vacancy), "now": _now()})
     conn.commit()
     return exists is None
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+# Pseudo-status for the list view: still "new", but rejected by the hard filters.
+FILTERED = "filtered"
+VIEWS = (*STATUSES, FILTERED)
+
+
+@dataclass(slots=True)
+class Filters:
+    status: str | None = "new"  # a value from VIEWS; None = everything
+    source: str | None = None
+    city: str | None = None
+    q: str | None = None  # substring of title, company or description
+
+
+def _where(f: Filters, *, with_status: bool = True) -> tuple[str, list]:
+    clauses, params = [], []
+    if with_status and f.status:
+        clauses.append(_STATUS_SQL[f.status])
+    if f.source:
+        clauses.append("source = ?")
+        params.append(f.source)
+    if f.city:
+        clauses.append("city LIKE ?")
+        params.append(f"%{f.city}%")
+    if f.q:
+        clauses.append("(title LIKE ? OR company LIKE ? OR description_text LIKE ?)")
+        params += [f"%{f.q}%"] * 3
+    return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+
+# "new" hides filtered vacancies; decided ones show regardless of filters.
+_STATUS_SQL = {
+    "new": "status = 'new' AND filter_reason IS NULL",
+    FILTERED: "status = 'new' AND filter_reason IS NOT NULL",
+    **{s: f"status = '{s}'" for s in STATUSES if s != "new"},
+}
+_VIEW_SQL = (
+    f"CASE WHEN status = 'new' AND filter_reason IS NOT NULL THEN '{FILTERED}' ELSE status END"
+)
+
+# Newest first; vacancies without a date go last. published_at mixes dates and
+# datetimes, so compare only the date part.
+_ORDER = " ORDER BY published_at IS NULL, substr(published_at, 1, 10) DESC, id DESC"
+
+
+def list_vacancies(conn: sqlite3.Connection, f: Filters, limit: int = 500) -> list[sqlite3.Row]:
+    where, params = _where(f)
+    sql = (
+        "SELECT id, source, title, company, city, published_at, published_raw, status, "
+        "status_reason, filter_reason FROM vacancies" + where + _ORDER + " LIMIT ?"
+    )
+    return conn.execute(sql, [*params, limit]).fetchall()
+
+
+def status_counts(conn: sqlite3.Connection, f: Filters) -> dict[str, int]:
+    where, params = _where(f, with_status=False)
+    rows = conn.execute(f"SELECT {_VIEW_SQL}, COUNT(*) FROM vacancies{where} GROUP BY 1", params)
+    return dict.fromkeys(VIEWS, 0) | {r[0]: r[1] for r in rows}
+
+
+def get_vacancy(conn: sqlite3.Connection, vacancy_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM vacancies WHERE id = ?", (vacancy_id,)).fetchone()
+
+
+def next_vacancy_id(conn: sqlite3.Connection, f: Filters, current_id: int) -> int | None:
+    """The vacancy after `current_id` in the filtered list (call before changing status)."""
+    ids = [r["id"] for r in list_vacancies(conn, f, limit=100_000)]
+    if current_id not in ids:
+        return ids[0] if ids else None
+    pos = ids.index(current_id)
+    return ids[pos + 1] if pos + 1 < len(ids) else None
+
+
+def set_status(
+    conn: sqlite3.Connection, vacancy_id: int, status: str, reason: str | None = None
+) -> None:
+    if status not in STATUSES:
+        raise ValueError(f"unknown status {status!r}")
+    conn.execute(
+        "UPDATE vacancies SET status = ?, status_reason = ?, status_at = ? WHERE id = ?",
+        (status, reason or None, _now(), vacancy_id),
+    )
+    conn.commit()

@@ -16,6 +16,12 @@ def test_parse_search(fixture):
     assert v.company == "Veroc Brands Group a.s."
     assert v.city == "Liberec, Turnov"  # deduplicated, order kept
     assert v.url == "https://www.startupjobs.cz/nabidka/108997/hledame-vyvojare-do-tymu"
+    assert (v.salary_min, v.salary_max, v.salary_currency, v.salary_period) == (
+        35000, 90000, "CZK", "month"
+    )  # fmt: skip
+    assert (v.work_mode, v.seniority) == ("hybrid,remote", "junior,medior")
+    empty = card_to_vacancy(items[1])
+    assert (empty.salary_min, empty.work_mode, empty.seniority) == (None, None, None)
 
 
 def test_card_falls_back_to_english_and_location_name(fixture):
@@ -55,4 +61,32 @@ def test_collect(fixture):
     assert a.description_text == "Ve Veroc rozšiřujeme tým.\n\n- full-stack\n- AI"
     assert a.description_html.startswith("<p>Ve Veroc")
     assert a.published_at == "2026-10-30T11:12:31.000Z"
+    assert a.languages == "english:advanced,czech:beginner"
     assert b.description_text is None  # failed detail doesn't stop the run
+
+
+def test_collect_with_remote_pass(fixture):
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("locations-autocomplete"):
+            return httpx.Response(
+                200, json={"member": [{"location": {"locationId": "PRG", "name": "Praha"}}]}
+            )
+        if request.url.path == "/api/search-offers":
+            body = json.loads(request.content)
+            bodies.append(body)
+            if "locationPreferences" in body:
+                return httpx.Response(200, text=fixture("startupjobs_search.json"))
+            return httpx.Response(200, json={"member": [], "view": {}})
+        return httpx.Response(200, text=fixture("startupjobs_offer.json"))
+
+    with HttpClient(delay=0, transport=httpx.MockTransport(handler)) as http:
+        flt = SearchFilter(keywords=["ai"], city="Praha", max_pages=1, include_remote=True)
+        vacancies = list(StartupJobs(http).collect(flt, skip_detail=set()))
+
+    assert bodies == [
+        {"locations": [{"locationId": "PRG", "radiusKm": 0}], "query": "ai"},
+        {"locationPreferences": ["remote"], "query": "ai"},
+    ]
+    assert len(vacancies) == 2

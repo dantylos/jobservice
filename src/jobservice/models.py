@@ -15,6 +15,14 @@ class Vacancy:
     published_at: str | None = None
     # The date exactly as the source showed it, e.g. "10. listopadu".
     published_raw: str | None = None
+    # Salary in whole currency units (not cents), as published.
+    salary_min: float | None = None
+    salary_max: float | None = None
+    salary_currency: str | None = None  # "CZK", "EUR", ...
+    salary_period: str | None = None  # "month", "hour", "day", "year"
+    work_mode: str | None = None  # comma-separated: "remote", "hybrid", "onsite"
+    seniority: str | None = None  # comma-separated: "junior", "medior", "senior"
+    languages: str | None = None  # comma-separated "language:level", e.g. "czech:advanced"
 
 
 @dataclass(slots=True)
@@ -22,3 +30,5 @@ class SearchFilter:
     keywords: list[str] = field(default_factory=list)
     city: str | None = None
     max_pages: int = 3
+    # Also search remote vacancies anywhere in the country.
+    include_remote: bool = False

@@ -6,6 +6,7 @@ import sys
 from dotenv import load_dotenv
 
 from jobservice import db
+from jobservice.filters import FilterConfig, apply_filters
 from jobservice.http import HttpClient
 from jobservice.models import SearchFilter
 from jobservice.sources import SOURCES
@@ -46,7 +47,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     c.add_argument("--refresh", action="store_true", help="re-download descriptions already stored")
     c.add_argument("-v", "--verbose", action="store_true")
+
+    f = sub.add_parser("filter", help="re-apply hard filters to the whole database")
+    f.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
+    f.add_argument("-v", "--verbose", action="store_true")
+
+    s = sub.add_parser("serve", help="local review page on http://127.0.0.1")
+    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
+    s.add_argument("-v", "--verbose", action="store_true")
     return p
+
+
+def _db_path(args: argparse.Namespace) -> str:
+    return args.db or os.getenv("JOBS_DB_PATH", "data/jobs.db")
+
+
+def serve(args: argparse.Namespace) -> int:
+    from jobservice.web import serve as run_server
+
+    run_server(_db_path(args), port=args.port)
+    return 0
 
 
 def collect(args: argparse.Namespace) -> int:
@@ -54,12 +75,13 @@ def collect(args: argparse.Namespace) -> int:
         keywords=args.keywords or _env_list("JOBS_KEYWORDS"),
         city=args.city or os.getenv("JOBS_CITY") or None,
         max_pages=args.max_pages or int(os.getenv("JOBS_MAX_PAGES", "3")),
+        include_remote=FilterConfig.from_env().allow_remote,
     )
     if not flt.keywords:
         log.error("no keywords: pass --keyword or set JOBS_KEYWORDS in .env")
         return 2
 
-    conn = db.connect(args.db or os.getenv("JOBS_DB_PATH", "data/jobs.db"))
+    conn = db.connect(_db_path(args))
     delay = args.delay if args.delay is not None else float(os.getenv("JOBS_REQUEST_DELAY", "1"))
     failed = False
     with HttpClient(delay=delay) as http:
@@ -75,8 +97,24 @@ def collect(args: argparse.Namespace) -> int:
                 log.exception("%s: aborted after %d vacancies", name, total)
                 failed = True
             log.info("%s: %d vacancies, %d new", name, total, new)
+    _run_filters(conn, city=flt.city)
     conn.close()
     return 1 if failed else 0
+
+
+def _run_filters(conn, city: str | None = None) -> None:
+    cfg = FilterConfig.from_env()
+    if city:
+        cfg.city = city
+    stats = apply_filters(conn, cfg)
+    log.info("filters: %(passed)d of %(total)d passed, %(filtered)d filtered out", stats)
+
+
+def filter_db(args: argparse.Namespace) -> int:
+    conn = db.connect(_db_path(args))
+    _run_filters(conn)
+    conn.close()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -88,7 +126,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not args.verbose:
         logging.getLogger("httpx").setLevel(logging.WARNING)
-    return collect(args)
+    commands = {"collect": collect, "filter": filter_db, "serve": serve}
+    return commands[args.command](args)
 
 
 if __name__ == "__main__":

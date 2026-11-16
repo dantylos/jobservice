@@ -32,6 +32,7 @@ def card_to_vacancy(item: dict) -> Vacancy:
     ]
     city = ", ".join(dict.fromkeys(p for p in places if p)) or None
     slug = localized(item.get("slug")) or ""
+    salary = item.get("salary") or {}
     return Vacancy(
         source="startupjobs",
         external_id=offer_id,
@@ -39,6 +40,13 @@ def card_to_vacancy(item: dict) -> Vacancy:
         url=f"{WEB}/nabidka/{offer_id}/{slug}".rstrip("/"),
         company=(item.get("company") or {}).get("name"),
         city=city,
+        # The API sends amounts in hundredths (3500000 = 35 000 CZK).
+        salary_min=salary["min"] / 100 if salary.get("min") else None,
+        salary_max=salary["max"] / 100 if salary.get("max") else None,
+        salary_currency=salary.get("currency"),
+        salary_period=salary.get("period"),
+        work_mode=",".join(item.get("locationPreferences") or []) or None,
+        seniority=",".join(item.get("seniorities") or []) or None,
     )
 
 
@@ -47,6 +55,14 @@ def apply_detail(v: Vacancy, data: dict) -> None:
     v.description_text = html_to_text(v.description_html)
     v.published_at = data.get("publishedAt") or data.get("createdAt")
     v.published_raw = v.published_at
+    langs = []
+    for req in data.get("requiredLanguages") or []:
+        lang = req.get("language") or {}
+        name = (lang.get("name") or {}).get("en") if isinstance(lang.get("name"), dict) else None
+        name = name or str(lang.get("id") or "")
+        if name:
+            langs.append(f"{name.lower()}:{(req.get('level') or '').lower()}")
+    v.languages = ",".join(langs) or None
 
 
 class StartupJobs:
@@ -69,35 +85,38 @@ class StartupJobs:
         return hints[0]["locationId"] if hints else None
 
     def collect(self, flt: SearchFilter, skip_detail: set[str]) -> Iterator[Vacancy]:
-        body: dict = {}
+        bodies: list[dict] = [{}]
         if flt.city:
             location_id = self.resolve_location(flt.city)
             if location_id:
-                body["locations"] = [{"locationId": location_id, "radiusKm": 0}]
+                bodies = [{"locations": [{"locationId": location_id, "radiusKm": 0}]}]
             else:
                 log.warning("startupjobs: unknown city %r, searching without it", flt.city)
+            if flt.include_remote:
+                bodies.append({"locationPreferences": ["remote"]})
 
         seen: set[str] = set()
         for keyword in flt.keywords:
-            for page in range(1, flt.max_pages + 1):
-                log.info("startupjobs: query=%r page=%d", keyword, page)
-                resp = self.http.post(
-                    f"{API}/search-offers",
-                    params={"page": page},
-                    json={**body, "query": keyword},
-                    headers=_HEADERS,
-                )
-                items, has_next = parse_search(resp.json())
-                for item in items:
-                    v = card_to_vacancy(item)
-                    if v.external_id in seen:
-                        continue
-                    seen.add(v.external_id)
-                    if v.external_id not in skip_detail:
-                        self._fill_detail(v)
-                    yield v
-                if not has_next or not items:
-                    break
+            for body in bodies:
+                for page in range(1, flt.max_pages + 1):
+                    log.info("startupjobs: query=%r %s page=%d", keyword, body or "", page)
+                    resp = self.http.post(
+                        f"{API}/search-offers",
+                        params={"page": page},
+                        json={**body, "query": keyword},
+                        headers=_HEADERS,
+                    )
+                    items, has_next = parse_search(resp.json())
+                    for item in items:
+                        v = card_to_vacancy(item)
+                        if v.external_id in seen:
+                            continue
+                        seen.add(v.external_id)
+                        if v.external_id not in skip_detail:
+                            self._fill_detail(v)
+                        yield v
+                    if not has_next or not items:
+                        break
 
     def _fill_detail(self, v: Vacancy) -> None:
         try:
