@@ -39,6 +39,15 @@ CREATE TABLE IF NOT EXISTS scores (
     scored_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_scores_score ON scores (score);
+CREATE TABLE IF NOT EXISTS pitches (
+    vacancy_id     INTEGER PRIMARY KEY REFERENCES vacancies (id) ON DELETE CASCADE,
+    text           TEXT NOT NULL,
+    language       TEXT NOT NULL,
+    model          TEXT,
+    prompt_version TEXT NOT NULL,
+    input_hash     TEXT NOT NULL,
+    created_at     TEXT NOT NULL
+);
 """
 
 _FIELDS = [f.name for f in fields(Vacancy)]
@@ -169,6 +178,10 @@ SORTS = {
         for key, col in (("score", "score"), ("ai", "score_ai"), ("qa", "score_qa"),
                          ("hr", "score_hr"))
     },
+    # Easiest to get into first (low, medium, high), best score first within each level.
+    "barrier": " ORDER BY entry_barrier IS NULL, "
+    "CASE entry_barrier WHEN 'low' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, "
+    f"score DESC, {_BY_DATE}",
 }  # fmt: skip
 
 _FROM = " FROM vacancies LEFT JOIN scores ON scores.vacancy_id = vacancies.id"

@@ -30,8 +30,11 @@ apply, later or skip.
    Scores are stored with a hash of the prompt version, profile and ad text, so only new or
    changed ads are scored again.
 4. **Review.** `jobservice serve` opens a local page (127.0.0.1 only) with tabs for new, apply,
-   later and skipped ads, text search, sorting by overall or per-track score, and keyboard
-   shortcuts: **A** apply, **L** later, **S** skip with a reason.
+   later and skipped ads, text search, sorting by overall or per-track score or by entry barrier,
+   and keyboard shortcuts: **A** apply, **L** later, **S** skip with a reason. Opening an ad
+   also drafts a ready-to-paste answer to StartupJobs' "Jak mohu vaši firmu posunout vpřed?"
+   (a short cover letter in the ad's language, facts only from my profile), with copy and
+   regenerate buttons. I paste and send it myself.
 
 ## Sources
 

@@ -218,3 +218,22 @@ def test_decision_keeps_score_sort_for_next(app):
         a, "POST", "/v/1/status", form={"status": "later", "f_status": "new", "f_sort": "score"}
     )
     assert headers["Location"] == "/v/3?status=new&sort=score"
+
+
+def test_sort_by_barrier_low_first_then_score(app):
+    a, path = app
+    add_score(path, 1, 10, 70, 0, barrier="high")  # Python Developer
+    add_score(path, 2, 30, 0, 0, barrier="low")  # HR Recruiter
+    add_score(path, 3, 50, 0, 0, barrier="medium")  # Old Undated Job
+    assert ids_in_order(path, sort="barrier") == [
+        "HR Recruiter <script>", "Old Undated Job", "Python Developer"]  # fmt: skip
+    _, _, html = request(a, "GET", "/", "sort=barrier")
+    assert '<option value="barrier" selected>' in html
+
+
+def test_sort_by_barrier_ties_by_score_unscored_last(app):
+    _, path = app
+    add_score(path, 1, 10, 40, 0, barrier="low")
+    add_score(path, 3, 80, 0, 0, barrier="low")
+    assert ids_in_order(path, sort="barrier") == [
+        "Old Undated Job", "Python Developer", "HR Recruiter <script>"]  # fmt: skip

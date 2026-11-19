@@ -149,6 +149,7 @@ def score(args: argparse.Namespace) -> int:
         rescore=args.rescore,
         ids=set(args.ids) if args.ids else None,
     )
+    _run_filters(conn)  # apply the score thresholds to the new scores
     conn.close()
     log.info("scoring: %(scored)d scored, %(failed)d failed of %(pending)d pending", stats)
     return 1 if stats["failed"] else 0

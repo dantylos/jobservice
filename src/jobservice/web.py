@@ -7,13 +7,16 @@ as escaped text (never the stored third-party HTML), so no foreign scripts run h
 import contextlib
 import json
 import logging
+import os
 import re
+import subprocess
 from html import escape
 from pathlib import Path
+from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlencode, urlsplit
-from wsgiref.simple_server import WSGIRequestHandler, make_server
+from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
-from jobservice import db
+from jobservice import db, pitch, scoring
 from jobservice.db import FILTERED, STATUSES, VIEWS, Filters
 
 log = logging.getLogger(__name__)
@@ -36,6 +39,7 @@ SORT_LABELS = {
     "ai": "По баллу AI",
     "qa": "По баллу QA",
     "hr": "По баллу HR",
+    "barrier": "По порогу входа",
 }
 
 Response = tuple[str, list[tuple[str, str]], bytes]
@@ -108,6 +112,30 @@ def _score_block(v) -> str:
     )
 
 
+PITCH_HEADINGS = {"startupjobs": "Jak mohu vaši firmu posunout vpřed?"}
+
+
+def _pitch_block(conn, v) -> str:
+    """Ready-to-paste application text; generated on open (via JS) unless already stored."""
+    stored = pitch.get_pitch(conn, v["id"])
+    auto = stored is None and _view(v) not in (FILTERED, "skip")
+    if stored:
+        status = f"Готово · {stored['language'].upper()} · {_e(stored['created_at'][:10])}"
+    elif auto:
+        status = "Генерирую текст, 10–20 секунд…"
+    else:
+        status = "Нажмите «Сгенерировать»"
+    heading = PITCH_HEADINGS.get(v["source"], "Сопроводительный текст")
+    button = "Сгенерировать заново" if stored else "Сгенерировать"
+    return (
+        f'<section class="pitch" data-id="{v["id"]}" data-auto="{int(auto)}">'
+        f'<div><b>{_e(heading)}</b> <span class="meta" id="pitch-status">{status}</span></div>'
+        f'<textarea id="pitch-text" rows="10">{_e(stored["text"]) if stored else ""}</textarea>'
+        '<div class="pitch-actions"><button type="button" id="pitch-copy">Копировать</button>'
+        f'<button type="button" id="pitch-regen">{button}</button></div></section>'
+    )
+
+
 def _view(row) -> str:
     return FILTERED if row["status"] == "new" and row["filter_reason"] else row["status"]
 
@@ -170,6 +198,10 @@ kbd { font-size:11px; color:var(--muted); }
 .fit .cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
   gap:8px 24px; margin-top:8px; }
 .fit ul { margin:4px 0 0; padding-left:18px; } .fit li { margin:2px 0; }
+.pitch { border:1px solid var(--line); border-radius:10px; padding:12px 16px; margin:16px 0; }
+.pitch textarea { width:100%; margin:8px 0; font:inherit; padding:10px; border-radius:8px;
+  border:1px solid var(--line); background:var(--bg); color:var(--fg); resize:vertical; }
+.pitch-actions { display:flex; gap:8px; }
 """
 
 KEYS_JS = """
@@ -181,12 +213,46 @@ document.addEventListener('keydown', e => {
 """
 
 
-def page(title: str, body: str) -> bytes:
+PITCH_JS = """
+const box = document.querySelector('.pitch');
+if (box) {
+  const text = document.getElementById('pitch-text');
+  const status = document.getElementById('pitch-status');
+  const regen = document.getElementById('pitch-regen');
+  const copy = document.getElementById('pitch-copy');
+  async function generate() {
+    regen.disabled = true;
+    status.textContent = 'Генерирую текст, 10–20 секунд…';
+    try {
+      const r = await fetch('/v/' + box.dataset.id + '/pitch', {method: 'POST'});
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || r.status);
+      text.value = d.text;
+      status.textContent = 'Готово · ' + d.language.toUpperCase();
+      regen.textContent = 'Сгенерировать заново';
+    } catch (e) {
+      status.textContent = 'Ошибка: ' + e.message;
+    } finally {
+      regen.disabled = false;
+    }
+  }
+  regen.addEventListener('click', generate);
+  copy.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(text.value);
+    copy.textContent = 'Скопировано';
+    setTimeout(() => { copy.textContent = 'Копировать'; }, 1500);
+  });
+  if (box.dataset.auto === '1') generate();
+}
+"""
+
+
+def page(title: str, body: str, script: str = "") -> bytes:
     return (
         "<!doctype html><html lang=ru><head><meta charset=utf-8>"
         '<meta name=viewport content="width=device-width, initial-scale=1">'
         f"<title>{_e(title)}</title><style>{CSS}</style></head>"
-        f"<body><main>{body}</main><script>{KEYS_JS}</script></body></html>"
+        f"<body><main>{body}</main><script>{KEYS_JS}{script}</script></body></html>"
     ).encode()
 
 
@@ -298,16 +364,23 @@ def render_detail(conn, vacancy_id: int, f: Filters) -> bytes | None:
         f'<a href="{_e(v["url"])}" target="_blank" rel="noopener noreferrer">'
         "Открыть на сайте ↗</a></div>"
         + (f'<div class="meta">{facts_html}</div>' if facts_html else "")
-        + f"{status}{_score_block(v)}{note}"
+        + f"{status}{_score_block(v)}{_pitch_block(conn, v)}{note}"
         f'<div class="desc">{_e(v["description_text"]) or "Описание не сохранено."}</div>'
         f"{actions}"
     )
-    return page(v["title"], body)
+    return page(v["title"], body, PITCH_JS)
 
 
 class App:
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        runner: scoring.Runner | None = None,
+        profile_path: str | Path | None = None,
+    ) -> None:
         self.db_path = db_path
+        self.runner = runner
+        self.profile_path = profile_path or os.getenv("JOBS_PROFILE_PATH", "data/profile.md")
         db.connect(db_path).close()  # create / migrate once at startup
 
     def __call__(self, environ, start_response):
@@ -328,13 +401,34 @@ class App:
                 return _html(html) if html else _text("404 Not Found", "Вакансия не найдена")
             if method == "POST" and (m := re.fullmatch(r"/v/(\d+)/status", path)):
                 return self._set_status(conn, environ, int(m.group(1)))
+            if method == "POST" and (m := re.fullmatch(r"/v/(\d+)/pitch", path)):
+                return self._make_pitch(conn, environ, int(m.group(1)))
             return _text("404 Not Found", "Not found")
         finally:
             conn.close()
 
+    def _make_pitch(self, conn, environ, vacancy_id: int) -> Response:
+        if not _same_origin(environ):
+            return _json("403 Forbidden", {"error": "cross-origin request refused"})
+        v = db.get_vacancy(conn, vacancy_id)
+        if v is None:
+            return _json("404 Not Found", {"error": "вакансия не найдена"})
+        try:
+            profile = scoring.load_profile(self.profile_path)
+        except (OSError, ValueError) as e:
+            return _json("500 Internal Server Error", {"error": f"профиль: {e}"})
+        runner = self.runner or scoring.runner_from_env()
+        try:
+            p = pitch.generate(v, profile, runner)
+        except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
+            log.warning("pitch for vacancy %d: %s", vacancy_id, e)
+            return _json("502 Bad Gateway", {"error": str(e)[:300]})
+        model = getattr(runner, "model_used", None)
+        pitch.save_pitch(conn, vacancy_id, p, model, pitch.input_hash(v, profile))
+        return _json("200 OK", {"text": p.text, "language": p.language})
+
     def _set_status(self, conn, environ, vacancy_id: int) -> Response:
-        origin = environ.get("HTTP_ORIGIN")
-        if origin and urlsplit(origin).netloc != environ.get("HTTP_HOST"):
+        if not _same_origin(environ):
             return _text("403 Forbidden", "Cross-origin request refused")
         if db.get_vacancy(conn, vacancy_id) is None:
             return _text("404 Not Found", "Вакансия не найдена")
@@ -351,6 +445,16 @@ class App:
         return "303 See Other", [("Location", location)], b""
 
 
+def _same_origin(environ) -> bool:
+    origin = environ.get("HTTP_ORIGIN")
+    return not origin or urlsplit(origin).netloc == environ.get("HTTP_HOST")
+
+
+def _json(status: str, data: dict) -> Response:
+    body = json.dumps(data, ensure_ascii=False).encode()
+    return status, [("Content-Type", "application/json; charset=utf-8")], body
+
+
 def _html(body: bytes) -> Response:
     return "200 OK", [("Content-Type", "text/html; charset=utf-8")], body
 
@@ -364,9 +468,17 @@ class _QuietHandler(WSGIRequestHandler):
         log.debug(format, *args)
 
 
+class _ThreadingServer(ThreadingMixIn, WSGIServer):
+    """A slow request (text generation takes seconds) must not block other pages."""
+
+    daemon_threads = True
+
+
 def serve(db_path: str | Path, port: int = 8000) -> None:
     app = App(db_path)
-    with make_server("127.0.0.1", port, app, handler_class=_QuietHandler) as httpd:
+    with make_server(
+        "127.0.0.1", port, app, server_class=_ThreadingServer, handler_class=_QuietHandler
+    ) as httpd:
         log.info("Open http://127.0.0.1:%d (Ctrl+C to stop)", port)
         with contextlib.suppress(KeyboardInterrupt):
             httpd.serve_forever()

@@ -29,6 +29,9 @@ class FilterConfig:
     known_languages: set[str] = field(
         default_factory=lambda: {"english", "russian", "ukrainian", "czech"}
     )
+    # Model score (see scoring.py): reject below this best-track score / with a high barrier.
+    min_score: int | None = 50
+    reject_high_barrier: bool = True
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] = os.environ) -> "FilterConfig":
@@ -41,6 +44,12 @@ class FilterConfig:
             cfg.min_salary_eur = float(env["JOBS_MIN_SALARY_EUR"])
         if env.get("JOBS_EUR_CZK", "").strip():
             cfg.eur_czk = float(env["JOBS_EUR_CZK"])
+        if "JOBS_MIN_SCORE" in env:
+            value = env["JOBS_MIN_SCORE"].strip()
+            cfg.min_score = int(value) if value else None
+        if "JOBS_REJECT_HIGH_BARRIER" in env:
+            value = env["JOBS_REJECT_HIGH_BARRIER"].strip().lower()
+            cfg.reject_high_barrier = value in ("1", "true", "yes")
         return cfg
 
 
@@ -202,9 +211,27 @@ def check_languages(row: Mapping, cfg: FilterConfig) -> str | None:
     return None
 
 
+# ---- model score -----------------------------------------------------------------------
+
+# Reasons from the score check start with this prefix, so scoring can still re-score them.
+SCORE_REASON = "Оценка: "
+
+
+def check_score(row: Mapping, cfg: FilterConfig) -> str | None:
+    """Unscored vacancies pass; the model judges them on the next `jobservice score`."""
+    score = row["score"] if "score" in row.keys() else None  # noqa: SIM118 (sqlite3.Row)
+    if score is None:
+        return None
+    if cfg.reject_high_barrier and row["entry_barrier"] == "high":
+        return SCORE_REASON + "высокий порог входа"
+    if cfg.min_score is not None and score < cfg.min_score:
+        return SCORE_REASON + f"балл {score} < {cfg.min_score}"
+    return None
+
+
 # ---- all together ---------------------------------------------------------------------
 
-CHECKS = (check_location, check_seniority, check_salary, check_languages)
+CHECKS = (check_location, check_seniority, check_salary, check_languages, check_score)
 
 
 def evaluate(row: Mapping, cfg: FilterConfig) -> str | None:
@@ -227,7 +254,10 @@ def dedup_key(row: Mapping) -> str:
 
 def apply_filters(conn: sqlite3.Connection, cfg: FilterConfig) -> dict[str, int]:
     """Recompute filter_reason for every vacancy. Returns counts for logging."""
-    rows = conn.execute("SELECT * FROM vacancies").fetchall()
+    rows = conn.execute(
+        "SELECT vacancies.*, scores.score, scores.entry_barrier FROM vacancies "
+        "LEFT JOIN scores ON scores.vacancy_id = vacancies.id"
+    ).fetchall()
     reasons = {r["id"]: evaluate(r, cfg) for r in rows}
 
     # Duplicates: keep one per (title, company). Prefer one you already decided on,

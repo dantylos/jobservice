@@ -219,3 +219,62 @@ def test_apply_filters_end_to_end():
 )
 def test_languages_from_title(title, expected):
     assert check_languages(row(title=title), CFG) == expected
+
+
+# ---- model score ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("score", "barrier", "expected"),
+    [
+        (None, None, None),  # not scored yet: passes
+        (80, "low", None),
+        (50, "medium", None),  # the threshold itself passes
+        (49, "low", "Оценка: балл 49 < 50"),
+        (90, "high", "Оценка: высокий порог входа"),
+        (10, "high", "Оценка: высокий порог входа"),
+    ],
+)
+def test_check_score(score, barrier, expected):
+    from jobservice.filters import check_score
+
+    assert check_score({"score": score, "entry_barrier": barrier}, CFG) == expected
+
+
+def test_check_score_can_be_switched_off():
+    from jobservice.filters import check_score
+
+    cfg = FilterConfig(min_score=None, reject_high_barrier=False)
+    assert check_score({"score": 1, "entry_barrier": "high"}, cfg) is None
+    assert check_score({"title": "no score column"}, CFG) is None
+
+
+def test_score_settings_from_env():
+    cfg = FilterConfig.from_env({"JOBS_MIN_SCORE": "60", "JOBS_REJECT_HIGH_BARRIER": "false"})
+    assert (cfg.min_score, cfg.reject_high_barrier) == (60, False)
+    assert FilterConfig.from_env({"JOBS_MIN_SCORE": ""}).min_score is None
+    assert FilterConfig.from_env({}).min_score == 50
+
+
+def test_apply_filters_uses_scores_and_hard_reasons_win():
+    from jobservice import scoring
+
+    conn = db.connect(":memory:")
+    for ext, title in (("1", "QA"), ("2", "AI"), ("3", "Senior QA"), ("4", "HR")):
+        db.upsert(conn, Vacancy(source="jobscz", external_id=ext, title=title, url=f"u/{ext}",
+                                city="Praha"))  # fmt: skip
+
+    def score(vid, best, barrier):
+        s = scoring.parse_score(dict(score_ai=0, score_qa=best, score_hr=0,
+                                     entry_barrier=barrier, fits=[], gaps=[]))  # fmt: skip
+        scoring.save_score(conn, vid, s, "m", "h")
+
+    score(1, 70, "low")
+    score(2, 30, "low")
+    score(3, 20, "high")  # also senior: the hard reason is reported
+    # 4 is not scored
+    stats = apply_filters(conn, CFG)
+    reasons = {r["id"]: r["filter_reason"] for r in conn.execute("SELECT * FROM vacancies")}
+    assert reasons == {1: None, 2: "Оценка: балл 30 < 50", 3: "Уровень: senior (в названии)",
+                       4: None}  # fmt: skip
+    assert stats["passed"] == 2

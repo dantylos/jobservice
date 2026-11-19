@@ -210,3 +210,27 @@ def test_score_pending_only_given_ids(conn):
     stats = scoring.score_pending(conn, runner, PROFILE, ids={2})
     assert stats["scored"] == 1
     assert [r[0] for r in conn.execute("SELECT vacancy_id FROM scores")] == [2]
+
+
+def test_score_filtered_vacancies_are_still_rescored(conn):
+    from jobservice.filters import SCORE_REASON
+
+    conn.execute("UPDATE vacancies SET filter_reason = ? WHERE id = 1", (SCORE_REASON + "x",))
+    conn.execute("UPDATE vacancies SET filter_reason = 'Место: Brno' WHERE id = 2")
+    assert {r["id"] for r in scoring.pending(conn, PROFILE)} == {1, 3}
+
+
+def test_cli_score_applies_score_filter(tmp_path, monkeypatch):
+    from jobservice.cli import main
+
+    (tmp_path / "p.md").write_text(PROFILE)
+    path = tmp_path / "j.db"
+    c = db.connect(path)
+    db.upsert(c, Vacancy(source="jobscz", external_id="1", title="QA", url="https://x/1",
+                         city="Praha"))  # fmt: skip
+    c.close()
+    monkeypatch.setenv("JOBS_MIN_SCORE", "90")
+    monkeypatch.setattr(scoring, "runner_from_env", lambda: FakeRunner([GOOD]))
+    assert main(["score", "--db", str(path), "--profile", str(tmp_path / "p.md")]) == 0
+    reason = db.connect(path).execute("SELECT filter_reason FROM vacancies").fetchone()[0]
+    assert reason == "Оценка: балл 82 < 90"

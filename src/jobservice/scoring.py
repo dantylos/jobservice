@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from jobservice.filters import SCORE_REASON
+
 log = logging.getLogger(__name__)
 
 # Bump when the prompt or schema changes: stored scores with another version get redone.
@@ -226,11 +228,14 @@ def save_score(
 
 
 def pending(conn: sqlite3.Connection, profile: str, rescore: bool = False) -> list[sqlite3.Row]:
-    """New vacancies that passed the hard filters and have no up-to-date score."""
+    """New vacancies that passed the hard filters and have no up-to-date score. Vacancies
+    rejected only by their score count as passed, so a changed profile re-scores them too."""
     rows = conn.execute(
         "SELECT v.*, s.input_hash AS stored_hash FROM vacancies v "
         "LEFT JOIN scores s ON s.vacancy_id = v.id "
-        "WHERE v.status = 'new' AND v.filter_reason IS NULL ORDER BY v.id DESC"
+        "WHERE v.status = 'new' AND (v.filter_reason IS NULL OR v.filter_reason LIKE ?) "
+        "ORDER BY v.id DESC",
+        (SCORE_REASON + "%",),
     ).fetchall()
     return [r for r in rows if rescore or r["stored_hash"] != input_hash(r, profile)]
 
