@@ -71,6 +71,25 @@ posunout vpřed?» (короткое сопроводительное письм
 **S** — пропустить (с причиной). После решения открывается следующая вакансия.
 Повторный сбор решения не сбрасывает. Сервер слушает только 127.0.0.1.
 
+## Отчёт по расписанию
+
+`uv run jobservice report` делает всё за один запуск: сбор → оценка моделью → фильтры, затем
+уведомление macOS «Отчёт по вакансиям готов» с числом новых и подходящих вакансий и лучшей из
+ждущих проверки (`--no-notify` — только в лог).
+
+Запуск раз в 2 дня в 12:00 (нечётные числа месяца) через launchd:
+`~/Library/LaunchAgents/com.jobservice.report.plist`, лог: `~/Library/Logs/jobservice-report.log`.
+Если Mac спал, пропущенный запуск выполнится при пробуждении.
+
+```sh
+launchctl kickstart gui/$(id -u)/com.jobservice.report      # запустить сейчас
+launchctl bootout gui/$(id -u)/com.jobservice.report        # выключить
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jobservice.report.plist  # включить
+```
+
+Чтобы запускать каждый день: в plist оставить в `StartCalendarInterval` один словарь
+`Hour=12, Minute=0` без `Day`, затем выключить и включить задачу.
+
 ## Таблица `vacancies`
 
 | поле | |

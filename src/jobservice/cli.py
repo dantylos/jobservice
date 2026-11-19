@@ -63,6 +63,11 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
     sc.add_argument("-v", "--verbose", action="store_true")
 
+    r = sub.add_parser("report", help="collect + score, then a summary notification (scheduled)")
+    r.add_argument("--no-notify", action="store_true", help="only log the summary")
+    r.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
+    r.add_argument("-v", "--verbose", action="store_true")
+
     s = sub.add_parser("serve", help="local review page on http://127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
@@ -155,6 +160,30 @@ def score(args: argparse.Namespace) -> int:
     return 1 if stats["failed"] else 0
 
 
+def report(args: argparse.Namespace) -> int:
+    """The scheduled run: collect, score, then tell the user what is waiting."""
+    from datetime import UTC, datetime
+
+    from jobservice import report as rep
+
+    started = datetime.now(UTC).isoformat(timespec="seconds")
+    common = dict(db=args.db, verbose=args.verbose)
+    collected = collect(argparse.Namespace(keywords=None, city=None, sources=None, max_pages=None,
+                                           delay=None, refresh=False, **common))  # fmt: skip
+    scored = score(argparse.Namespace(profile=None, model=None, limit=None, rescore=False, ids=None,
+                                      **common))  # fmt: skip
+    conn = db.connect(_db_path(args))
+    summary = rep.summarize(conn, since=started)
+    conn.close()
+    message = summary.message()
+    if collected or scored:
+        message += " Были ошибки, см. лог."
+    log.info("report: %s", message)
+    if not args.no_notify:
+        rep.notify("Отчёт по вакансиям готов", message)
+    return max(collected, scored)
+
+
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     args = build_parser().parse_args(argv)
@@ -164,7 +193,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not args.verbose:
         logging.getLogger("httpx").setLevel(logging.WARNING)
-    commands = {"collect": collect, "filter": filter_db, "score": score, "serve": serve}
+    commands = {
+        "collect": collect,
+        "filter": filter_db,
+        "score": score,
+        "report": report,
+        "serve": serve,
+    }
     return commands[args.command](args)
 
 

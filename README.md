@@ -53,6 +53,7 @@ uv run jobservice collect            # settings from .env
 uv run jobservice collect -k python -k tester --city Praha --max-pages 2
 uv run jobservice filter             # re-apply filters after changing settings
 uv run jobservice score --limit 10   # score new ads with Claude (needs data/profile.md)
+uv run jobservice report             # collect + score + desktop notification
 uv run jobservice serve              # http://127.0.0.1:8000
 ```
 
