@@ -23,9 +23,15 @@ apply, later or skip.
      Ukrainian.
    - **Duplicates:** the same title and company on several sites. The copy with a decision wins,
      otherwise the one with the longest description.
-3. **Review.** `jobservice serve` opens a local page (127.0.0.1 only) with tabs for new, apply,
-   later and skipped ads, text search, and keyboard shortcuts: **A** apply, **L** later,
-   **S** skip with a reason.
+3. **Score.** `jobservice score` sends each new ad that passed the filters, together with my
+   profile (three base CVs for three tracks: AI, QA, HR), to Claude through Claude Code in
+   headless mode (`claude -p`, no tools, JSON-schema output). The model returns a 0-100 score
+   per track, the entry barrier, and up to three points on why the ad fits and what is missing.
+   Scores are stored with a hash of the prompt version, profile and ad text, so only new or
+   changed ads are scored again.
+4. **Review.** `jobservice serve` opens a local page (127.0.0.1 only) with tabs for new, apply,
+   later and skipped ads, text search, sorting by overall or per-track score, and keyboard
+   shortcuts: **A** apply, **L** later, **S** skip with a reason.
 
 ## Sources
 
@@ -43,6 +49,7 @@ cp .env.example .env                 # keywords, city, filters, database path
 uv run jobservice collect            # settings from .env
 uv run jobservice collect -k python -k tester --city Praha --max-pages 2
 uv run jobservice filter             # re-apply filters after changing settings
+uv run jobservice score --limit 10   # score new ads with Claude (needs data/profile.md)
 uv run jobservice serve              # http://127.0.0.1:8000
 ```
 
@@ -53,7 +60,8 @@ uv run pytest
 uv run ruff check . && uv run ruff format --check .
 ```
 
-Parsers are tested against saved page fixtures (`tests/fixtures`), so a change in a site's
+The model call is replaced by a fake in tests, so the suite runs offline. Parsers are tested
+against saved page fixtures (`tests/fixtures`), so a change in a site's
 markup shows up as a failing test rather than as silently wrong data. Filters, the database
 layer and the review page have their own tests. CI runs lint, formatting and the full suite on
 every push.
@@ -64,7 +72,7 @@ every push.
 - [x] Hard filters and duplicate merging
 - [x] Local review page
 - [ ] More sources: Prace.cz, e-mail job alerts
-- [ ] LLM scoring of each ad against my profile, with "why it fits / what is missing"
+- [x] LLM scoring of each ad against my profile, with "why it fits / what is missing"
 - [ ] Tailored CV (DOCX + PDF) and cover letter for approved ads
 - [ ] Sending applications by e-mail, only after explicit confirmation of each one
 

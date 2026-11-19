@@ -5,6 +5,7 @@ as escaped text (never the stored third-party HTML), so no foreign scripts run h
 """
 
 import contextlib
+import json
 import logging
 import re
 from html import escape
@@ -27,6 +28,15 @@ STATUS_LABELS = {
 _PERIODS = {"month": "мес", "hour": "час", "day": "день", "year": "год", "week": "нед"}
 _MODES = {"remote": "удалённо", "hybrid": "гибрид", "onsite": "в офисе"}
 SOURCE_LABELS = {"jobscz": "Jobs.cz", "startupjobs": "StartupJobs"}
+TRACK_LABELS = {"ai": "AI", "qa": "QA", "hr": "HR"}
+BARRIER_LABELS = {"low": "низкий порог", "medium": "средний порог", "high": "высокий порог"}
+SORT_LABELS = {
+    "date": "Сначала новые",
+    "score": "По баллу",
+    "ai": "По баллу AI",
+    "qa": "По баллу QA",
+    "hr": "По баллу HR",
+}
 
 Response = tuple[str, list[tuple[str, str]], bytes]
 
@@ -43,11 +53,13 @@ def filters_from(params: dict[str, list[str]], prefix: str = "") -> Filters:
         source=_first(params, prefix + "source"),
         city=_first(params, prefix + "city"),
         q=_first(params, prefix + "q"),
+        sort=sort if (sort := _first(params, prefix + "sort")) in db.SORTS else "date",
     )
 
 
 def filters_qs(f: Filters, **override: str) -> str:
-    values = {"status": f.status or "all", "source": f.source, "city": f.city, "q": f.q}
+    values = {"status": f.status or "all", "source": f.source, "city": f.city, "q": f.q,
+              "sort": None if f.sort == "date" else f.sort}  # fmt: skip
     values |= override
     return urlencode({k: v for k, v in values.items() if v})
 
@@ -59,6 +71,41 @@ def _salary(row) -> str | None:
     amount = "–".join(f"{x:,.0f}".replace(",", " ") for x in (low, high) if x)
     period = _PERIODS.get(row["salary_period"] or "month", row["salary_period"])
     return f"{amount} {row['salary_currency'] or ''}/{period}"
+
+
+def _score_class(score: int) -> str:
+    return "hi" if score >= 60 else "mid" if score >= 35 else "lo"
+
+
+def _score_badge(row, track: str | None = None) -> str:
+    """'QA 66 · низкий порог' for the list; `track` shows that track's score instead."""
+    if row["score"] is None:
+        return ""
+    track = track if track in TRACK_LABELS else row["best_track"]
+    score = row[f"score_{track}"]
+    return (
+        f' <span class="score {_score_class(score)}">{TRACK_LABELS[track]} {score}</span>'
+        f' <span class="meta">{BARRIER_LABELS.get(row["entry_barrier"], "")}</span>'
+    )
+
+
+def _score_block(v) -> str:
+    if v["score"] is None:
+        return ""
+    scores = " ".join(
+        f'<span class="score {_score_class(v[f"score_{t}"])}">{label} {v[f"score_{t}"]}</span>'
+        for t, label in TRACK_LABELS.items()
+    )
+
+    def items(column: str) -> str:
+        return "".join(f"<li>{_e(x)}</li>" for x in json.loads(v[column] or "[]"))
+
+    return (
+        f'<section class="fit"><div>{scores} '
+        f'<span class="meta">{BARRIER_LABELS.get(v["entry_barrier"], "")}</span></div>'
+        f'<div class="cols"><div><b>Почему подходит</b><ul>{items("fits")}</ul></div>'
+        f"<div><b>Чего не хватает</b><ul>{items('gaps')}</ul></div></div></section>"
+    )
 
 
 def _view(row) -> str:
@@ -115,6 +162,14 @@ button { cursor:pointer; background:var(--card); }
 .actions .skip { border-color:var(--skip); color:var(--skip); }
 .actions input { flex: 1 1 200px; }
 kbd { font-size:11px; color:var(--muted); }
+.score { font-size:12px; font-weight:600; padding:1px 8px; border-radius:6px;
+  background:var(--card); white-space:nowrap; }
+.score.hi { color:var(--apply); } .score.mid { color:var(--later); }
+.score.lo { color:var(--muted); }
+.fit { border:1px solid var(--line); border-radius:10px; padding:12px 16px; margin:16px 0; }
+.fit .cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
+  gap:8px 24px; margin-top:8px; }
+.fit ul { margin:4px 0 0; padding-left:18px; } .fit li { margin:2px 0; }
 """
 
 KEYS_JS = """
@@ -151,12 +206,17 @@ def render_list(conn, f: Filters) -> bytes:
         f'<option value="{k}"{" selected" if f.source == k else ""}>{v}</option>'
         for k, v in SOURCE_LABELS.items()
     )
+    sorts = "".join(
+        f'<option value="{k}"{" selected" if f.sort == k else ""}>{v}</option>'
+        for k, v in SORT_LABELS.items()
+    )
     filters = (
         '<form class="filters" method="get" action="/">'
         f'<input type="hidden" name="status" value="{_e(f.status or "all")}">'
         f'<input name="q" value="{_e(f.q)}" placeholder="Поиск: должность, компания, текст">'
         f'<input name="city" value="{_e(f.city)}" placeholder="Город">'
         f'<select name="source"><option value="">Все сайты</option>{sources}</select>'
+        f'<select name="sort">{sorts}</select>'
         "<button>Найти</button></form>"
     )
 
@@ -170,7 +230,8 @@ def render_list(conn, f: Filters) -> bytes:
         why = r["status_reason"] or (r["filter_reason"] if view == FILTERED else None)
         reason = f" · {_e(why)}" if why else ""
         items.append(
-            f'<li><a class="t" href="/v/{r["id"]}?{filters_qs(f)}">{_e(r["title"])}</a>{badge}'
+            f'<li><a class="t" href="/v/{r["id"]}?{filters_qs(f)}">{_e(r["title"])}</a>'
+            f"{_score_badge(r, f.sort)}{badge}"
             f'<div class="meta">{_e(r["company"]) or "—"} · {_e(r["city"]) or "—"} · '
             f"{_e(_date(r))} · {SOURCE_LABELS.get(r['source'], r['source'])}{reason}</div></li>"
         )
@@ -237,7 +298,7 @@ def render_detail(conn, vacancy_id: int, f: Filters) -> bytes | None:
         f'<a href="{_e(v["url"])}" target="_blank" rel="noopener noreferrer">'
         "Открыть на сайте ↗</a></div>"
         + (f'<div class="meta">{facts_html}</div>' if facts_html else "")
-        + f"{status}{note}"
+        + f"{status}{_score_block(v)}{note}"
         f'<div class="desc">{_e(v["description_text"]) or "Описание не сохранено."}</div>'
         f"{actions}"
     )

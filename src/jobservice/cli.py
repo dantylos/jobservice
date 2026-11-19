@@ -52,6 +52,17 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
     f.add_argument("-v", "--verbose", action="store_true")
 
+    sc = sub.add_parser("score", help="score new vacancies against the profile with Claude Code")
+    sc.add_argument("--limit", type=int, help="score at most N vacancies (e.g. a trial run)")
+    sc.add_argument("--id", type=int, action="append", dest="ids", help="only this vacancy id")
+    sc.add_argument("--rescore", action="store_true", help="redo scores that are up to date")
+    sc.add_argument(
+        "--profile", help="profile file (env JOBS_PROFILE_PATH, default data/profile.md)"
+    )
+    sc.add_argument("--model", help="Claude model (env JOBS_SCORE_MODEL, default: Claude Code's)")
+    sc.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
+    sc.add_argument("-v", "--verbose", action="store_true")
+
     s = sub.add_parser("serve", help="local review page on http://127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
@@ -117,6 +128,32 @@ def filter_db(args: argparse.Namespace) -> int:
     return 0
 
 
+def score(args: argparse.Namespace) -> int:
+    from jobservice import scoring
+
+    path = args.profile or os.getenv("JOBS_PROFILE_PATH", "data/profile.md")
+    try:
+        profile = scoring.load_profile(path)
+    except (OSError, ValueError) as e:
+        log.error("profile: %s", e)
+        return 2
+    runner = scoring.runner_from_env()
+    if args.model:
+        runner.model = args.model
+    conn = db.connect(_db_path(args))
+    stats = scoring.score_pending(
+        conn,
+        runner,
+        profile,
+        limit=args.limit,
+        rescore=args.rescore,
+        ids=set(args.ids) if args.ids else None,
+    )
+    conn.close()
+    log.info("scoring: %(scored)d scored, %(failed)d failed of %(pending)d pending", stats)
+    return 1 if stats["failed"] else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     args = build_parser().parse_args(argv)
@@ -126,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not args.verbose:
         logging.getLogger("httpx").setLevel(logging.WARNING)
-    commands = {"collect": collect, "filter": filter_db, "serve": serve}
+    commands = {"collect": collect, "filter": filter_db, "score": score, "serve": serve}
     return commands[args.command](args)
 
 

@@ -23,6 +23,22 @@ CREATE TABLE IF NOT EXISTS vacancies (
     UNIQUE (source, external_id)
 );
 CREATE INDEX IF NOT EXISTS idx_vacancies_published ON vacancies (published_at);
+CREATE TABLE IF NOT EXISTS scores (
+    vacancy_id     INTEGER PRIMARY KEY REFERENCES vacancies (id) ON DELETE CASCADE,
+    score          INTEGER NOT NULL,
+    best_track     TEXT NOT NULL,
+    score_ai       INTEGER NOT NULL,
+    score_qa       INTEGER NOT NULL,
+    score_hr       INTEGER NOT NULL,
+    entry_barrier  TEXT NOT NULL,
+    fits           TEXT NOT NULL,
+    gaps           TEXT NOT NULL,
+    model          TEXT,
+    prompt_version TEXT NOT NULL,
+    input_hash     TEXT NOT NULL,
+    scored_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scores_score ON scores (score);
 """
 
 _FIELDS = [f.name for f in fields(Vacancy)]
@@ -111,6 +127,7 @@ class Filters:
     source: str | None = None
     city: str | None = None
     q: str | None = None  # substring of title, company or description
+    sort: str = "date"  # a key of SORTS
 
 
 def _where(f: Filters, *, with_status: bool = True) -> tuple[str, list]:
@@ -142,13 +159,31 @@ _VIEW_SQL = (
 # Newest first; vacancies without a date go last. published_at mixes dates and
 # datetimes, so compare only the date part.
 _ORDER = " ORDER BY published_at IS NULL, substr(published_at, 1, 10) DESC, id DESC"
+_BY_DATE = _ORDER.removeprefix(" ORDER BY ")
+
+# Score sorts put unscored vacancies last, then fall back to the date order.
+SORTS = {
+    "date": _ORDER,
+    **{
+        key: f" ORDER BY {col} IS NULL, {col} DESC, {_BY_DATE}"
+        for key, col in (("score", "score"), ("ai", "score_ai"), ("qa", "score_qa"),
+                         ("hr", "score_hr"))
+    },
+}  # fmt: skip
+
+_FROM = " FROM vacancies LEFT JOIN scores ON scores.vacancy_id = vacancies.id"
+_SCORE_COLUMNS = "score, best_track, score_ai, score_qa, score_hr, entry_barrier"
 
 
 def list_vacancies(conn: sqlite3.Connection, f: Filters, limit: int = 500) -> list[sqlite3.Row]:
     where, params = _where(f)
     sql = (
         "SELECT id, source, title, company, city, published_at, published_raw, status, "
-        "status_reason, filter_reason FROM vacancies" + where + _ORDER + " LIMIT ?"
+        f"status_reason, filter_reason, {_SCORE_COLUMNS}"
+        + _FROM
+        + where
+        + SORTS.get(f.sort, _ORDER)
+        + " LIMIT ?"
     )
     return conn.execute(sql, [*params, limit]).fetchall()
 
@@ -160,7 +195,8 @@ def status_counts(conn: sqlite3.Connection, f: Filters) -> dict[str, int]:
 
 
 def get_vacancy(conn: sqlite3.Connection, vacancy_id: int) -> sqlite3.Row | None:
-    return conn.execute("SELECT * FROM vacancies WHERE id = ?", (vacancy_id,)).fetchone()
+    sql = f"SELECT vacancies.*, {_SCORE_COLUMNS}, fits, gaps" + _FROM + " WHERE id = ?"
+    return conn.execute(sql, (vacancy_id,)).fetchone()
 
 
 def next_vacancy_id(conn: sqlite3.Connection, f: Filters, current_id: int) -> int | None:

@@ -154,3 +154,67 @@ def test_migrates_old_database(tmp_path):
     conn = db.connect(path)
     assert db.get_vacancy(conn, 1)["status"] == "new"
     conn.close()
+
+
+def add_score(path, vacancy_id, ai, qa, hr, barrier="low", fits=("ok",), gaps=("<b>x</b>",)):
+    from jobservice import scoring
+
+    conn = db.connect(path)
+    s = scoring.parse_score(dict(score_ai=ai, score_qa=qa, score_hr=hr, entry_barrier=barrier,
+                                 fits=list(fits), gaps=list(gaps)))  # fmt: skip
+    scoring.save_score(conn, vacancy_id, s, "m", "h")
+    conn.close()
+
+
+def test_sort_by_score_puts_unscored_last(app):
+    _, path = app
+    add_score(path, 1, 10, 70, 0)  # Python Developer: best QA 70
+    add_score(path, 3, 50, 20, 0)  # Old Undated Job: best AI 50
+    assert ids_in_order(path, sort="score") == [
+        "Python Developer", "Old Undated Job", "HR Recruiter <script>"]  # fmt: skip
+    assert ids_in_order(path, sort="ai")[:2] == ["Old Undated Job", "Python Developer"]
+    assert ids_in_order(path)[0] == "HR Recruiter <script>"  # default: newest first
+
+
+def test_list_shows_score_badge_and_keeps_sort(app):
+    a, path = app
+    add_score(path, 1, 10, 70, 0, barrier="medium")
+    _, _, html = request(a, "GET", "/", "sort=score")
+    assert 'class="score hi">QA 70</span>' in html
+    assert "средний порог" in html
+    assert 'href="/v/1?status=new&sort=score"' in html
+    assert '<option value="score" selected>' in html
+    # sorting by one track shows that track's score
+    _, _, html = request(a, "GET", "/", "sort=ai")
+    assert 'class="score lo">AI 10</span>' in html
+
+
+def test_unknown_sort_falls_back_to_date(app):
+    a, _ = app
+    status, _, html = request(a, "GET", "/", "sort=;drop")
+    assert status == "200 OK" and '<option value="date" selected>' in html
+
+
+def test_detail_shows_fit_block_escaped(app):
+    a, path = app
+    add_score(path, 1, 10, 70, 5, fits=("pytest в проектах",), gaps=("<script>x</script>",))
+    _, _, html = request(a, "GET", "/v/1")
+    assert "Почему подходит" in html and "pytest в проектах" in html
+    assert "&lt;script&gt;x&lt;/script&gt;" in html
+    assert 'class="score hi">QA 70</span>' in html and 'class="score lo">HR 5</span>' in html
+
+
+def test_detail_without_score_has_no_fit_block(app):
+    a, _ = app
+    _, _, html = request(a, "GET", "/v/2")
+    assert "Почему подходит" not in html
+
+
+def test_decision_keeps_score_sort_for_next(app):
+    a, path = app
+    add_score(path, 1, 10, 70, 0)
+    add_score(path, 3, 50, 20, 0)
+    _, headers, _ = request(
+        a, "POST", "/v/1/status", form={"status": "later", "f_status": "new", "f_sort": "score"}
+    )
+    assert headers["Location"] == "/v/3?status=new&sort=score"
