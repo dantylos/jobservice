@@ -1,74 +1,75 @@
 # jobservice
 
-Сборщик вакансий с [Jobs.cz](https://www.jobs.cz) и [StartupJobs.cz](https://www.startupjobs.cz) в SQLite.
+[![CI](https://github.com/dantylos/jobservice/actions/workflows/ci.yml/badge.svg)](https://github.com/dantylos/jobservice/actions/workflows/ci.yml)
 
-## Установка
+English · [Русский](README.ru.md)
+
+A personal job-search pipeline for the Czech market. It collects job ads from
+[Jobs.cz](https://www.jobs.cz) and [StartupJobs.cz](https://www.startupjobs.cz) into SQLite,
+drops ads that clearly do not fit, and serves a local page where I review each ad and decide:
+apply, later or skip.
+
+## What it does
+
+1. **Collect.** Search results and full ad pages from each source go into one SQLite table.
+   Re-running updates existing rows (key: `source` + `external_id`) instead of duplicating them,
+   and skips descriptions already stored. Requests are rate-limited with retries and backoff.
+2. **Filter.** Hard rules reject an ad only on clear evidence, so an ad with missing data passes.
+   Rejected ads are kept with the reason, never deleted.
+   - **Location:** a chosen city or remote work.
+   - **Salary:** top of the range below a monthly minimum in EUR (CZK converted, hourly × 160).
+   - **Seniority:** senior / lead / head / principal titles.
+   - **Language:** Czech required above B1, or another language besides English, Russian and
+     Ukrainian.
+   - **Duplicates:** the same title and company on several sites. The copy with a decision wins,
+     otherwise the one with the longest description.
+3. **Review.** `jobservice serve` opens a local page (127.0.0.1 only) with tabs for new, apply,
+   later and skipped ads, text search, and keyboard shortcuts: **A** apply, **L** later,
+   **S** skip with a reason.
+
+## Sources
+
+- **StartupJobs:** the JSON API the site itself uses.
+- **Jobs.cz:** search-result HTML, then each ad page (JSON-LD where available). Ads on
+  employer-branded templates (`*.jobs.cz/detail-pozice`) are rendered by JavaScript, so only the
+  short `og:description` summary is stored for them.
+
+## Usage
 
 ```sh
 uv sync
-cp .env.example .env   # ключевые слова, город, путь к БД
+cp .env.example .env                 # keywords, city, filters, database path
+
+uv run jobservice collect            # settings from .env
+uv run jobservice collect -k python -k tester --city Praha --max-pages 2
+uv run jobservice filter             # re-apply filters after changing settings
+uv run jobservice serve              # http://127.0.0.1:8000
 ```
 
-## Запуск
-
-```sh
-uv run jobservice collect                         # параметры из .env
-uv run jobservice collect -k python -k django --city Praha --max-pages 2
-uv run jobservice collect --source startupjobs --refresh
-```
-
-Повторный запуск обновляет существующие записи (ключ — `source` + `external_id`) и не
-скачивает заново описания, которые уже есть в БД (`--refresh` — скачать заново).
-
-## Фильтры
-
-После каждого сбора применяются жёсткие фильтры. Отсеянные вакансии не удаляются:
-они в вкладке «Отсеянные» с причиной. Отсеивается только при явных признаках,
-при нехватке данных вакансия проходит.
-
-- **Место:** `JOBS_CITY` или удалёнка (`JOBS_INCLUDE_REMOTE`).
-- **Зарплата:** верх диапазона ниже `JOBS_MIN_SALARY_EUR` €/мес (CZK по курсу
-  `JOBS_EUR_CZK`, почасовая × 160). Без зарплаты — проходит.
-- **Уровень:** только senior / lead / head / principal… (medior проходит).
-- **Языки:** чешский выше B1 или другой язык, кроме английского, русского, украинского.
-- **Дубли:** одинаковые должность + компания; остаётся та, по которой уже есть
-  решение, иначе с самым длинным описанием.
-
-После изменения настроек: `uv run jobservice filter`.
-
-## Просмотр и решения
-
-```sh
-uv run jobservice serve            # http://127.0.0.1:8000, Ctrl+C — остановить
-```
-
-Вкладки «Новые / Откликнуться / Позже / Пропущенные / Все», поиск по тексту, фильтр
-по городу и сайту. На странице вакансии: **A** — откликаться, **L** — позже,
-**S** — пропустить (с причиной). После решения открывается следующая вакансия.
-Повторный сбор решения не сбрасывает. Сервер слушает только 127.0.0.1.
-
-## Таблица `vacancies`
-
-| поле | |
-|---|---|
-| `source`, `external_id` | `jobscz` / `startupjobs` и id вакансии на сайте |
-| `title`, `company`, `city`, `url` | |
-| `description_text`, `description_html` | описание текстом и в исходном HTML |
-| `published_at` | ISO-дата публикации, если её удалось определить |
-| `published_raw` | дата как её показал сайт (`10. listopadu`, `Končí zítra`…) |
-| `first_seen_at`, `last_seen_at` | когда вакансию впервые / последний раз видел сборщик |
-| `status`, `status_reason`, `status_at` | решение: `new` / `apply` / `later` / `skip`, причина пропуска, когда |
-
-## Источники
-
-- **StartupJobs** — JSON API, которым пользуется сам сайт (`back.startupjobs.cz`).
-- **Jobs.cz** — HTML выдачи + страница вакансии. У вакансий на шаблонах работодателей
-  (`*.jobs.cz/detail-pozice`) текст рендерится JavaScript'ом, поэтому для них сохраняется
-  только краткое описание из `og:description`, а `description_html` пустой.
-
-## Разработка
+## Testing
 
 ```sh
 uv run pytest
-uv run ruff check . && uv run ruff format .
+uv run ruff check . && uv run ruff format --check .
 ```
+
+Parsers are tested against saved page fixtures (`tests/fixtures`), so a change in a site's
+markup shows up as a failing test rather than as silently wrong data. Filters, the database
+layer and the review page have their own tests. CI runs lint, formatting and the full suite on
+every push.
+
+## Roadmap
+
+- [x] Collection from Jobs.cz and StartupJobs
+- [x] Hard filters and duplicate merging
+- [x] Local review page
+- [ ] More sources: Prace.cz, e-mail job alerts
+- [ ] LLM scoring of each ad against my profile, with "why it fits / what is missing"
+- [ ] Tailored CV (DOCX + PDF) and cover letter for approved ads
+- [ ] Sending applications by e-mail, only after explicit confirmation of each one
+
+## Stack
+
+Python 3.12, uv, SQLite, httpx, selectolax, standard-library WSGI for the review page,
+pytest and Ruff. Built with an AI coding agent (Claude Code): I set the requirements and
+review each step, and the tests guard the behaviour.
