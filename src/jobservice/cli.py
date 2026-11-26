@@ -50,6 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("-v", "--verbose", action="store_true")
 
     f = sub.add_parser("filter", help="re-apply hard filters to the whole database")
+    f.add_argument("--stats", action="store_true", help="print why new vacancies were rejected")
     f.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
     f.add_argument("-v", "--verbose", action="store_true")
 
@@ -130,6 +131,9 @@ def _run_filters(conn, city: str | None = None) -> None:
 def filter_db(args: argparse.Namespace) -> int:
     conn = db.connect(_db_path(args))
     _run_filters(conn)
+    if args.stats:
+        for kind, n in db.filter_reason_counts(conn).items():
+            print(f"{n:5d}  {kind}")
     conn.close()
     return 0
 

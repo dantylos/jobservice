@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from jobservice import db, pitch, scoring
-from jobservice.db import FILTERED, STATUSES, VIEWS, Filters
+from jobservice.db import FILTERED, STATUSES, Filters
 
 log = logging.getLogger(__name__)
 
@@ -53,11 +53,12 @@ def _first(params: dict[str, list[str]], key: str) -> str | None:
 def filters_from(params: dict[str, list[str]], prefix: str = "") -> Filters:
     status = _first(params, prefix + "status") or "new"
     return Filters(
-        status=None if status == "all" else status if status in VIEWS else "new",
+        status=None if status == "all" else status if status in STATUSES else "new",
         source=_first(params, prefix + "source"),
         city=_first(params, prefix + "city"),
         q=_first(params, prefix + "q"),
         sort=sort if (sort := _first(params, prefix + "sort")) in db.SORTS else "date",
+        include_filtered=False,
     )
 
 
@@ -259,8 +260,9 @@ def page(title: str, body: str, script: str = "") -> bytes:
 def render_list(conn, f: Filters) -> bytes:
     counts = db.status_counts(conn, f)
     tabs = []
-    for key in (*VIEWS, "all"):
-        n = sum(counts.values()) if key == "all" else counts[key]
+    # Vacancies rejected by the filters are not shown at all (they stay in the database).
+    for key in (*STATUSES, "all"):
+        n = sum(counts[s] for s in STATUSES) if key == "all" else counts[key]
         label = "Все" if key == "all" else STATUS_LABELS[key]
         on = " on" if (f.status or "all") == key else ""
         tabs.append(
@@ -293,8 +295,7 @@ def render_list(conn, f: Filters) -> bytes:
         view = _view(r)
         if view != "new" and f.status is None:
             badge = f' <span class="badge s-{view}">{STATUS_LABELS[view]}</span>'
-        why = r["status_reason"] or (r["filter_reason"] if view == FILTERED else None)
-        reason = f" · {_e(why)}" if why else ""
+        reason = f" · {_e(r['status_reason'])}" if r["status_reason"] else ""
         items.append(
             f'<li><a class="t" href="/v/{r["id"]}?{filters_qs(f)}">{_e(r["title"])}</a>'
             f"{_score_badge(r, f.sort)}{badge}"

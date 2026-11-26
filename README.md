@@ -15,7 +15,8 @@ apply, later or skip.
    Re-running updates existing rows (key: `source` + `external_id`) instead of duplicating them,
    and skips descriptions already stored. Requests are rate-limited with retries and backoff.
 2. **Filter.** Hard rules reject an ad only on clear evidence, so an ad with missing data passes.
-   Rejected ads are kept with the reason, never deleted.
+   Rejected ads are hidden from the review page but kept with the reason, never deleted
+   (`jobservice filter --stats` prints a summary).
    - **Location:** a chosen city or remote work.
    - **Salary:** top of the range below a monthly minimum in EUR (CZK converted, hourly × 160).
    - **Seniority:** senior / lead / head / principal titles.

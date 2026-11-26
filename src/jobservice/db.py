@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from dataclasses import asdict, dataclass, fields
 from datetime import UTC, datetime
@@ -137,12 +138,16 @@ class Filters:
     city: str | None = None
     q: str | None = None  # substring of title, company or description
     sort: str = "date"  # a key of SORTS
+    # With status=None: also list vacancies rejected by the filters (the review page hides them).
+    include_filtered: bool = True
 
 
 def _where(f: Filters, *, with_status: bool = True) -> tuple[str, list]:
     clauses, params = [], []
     if with_status and f.status:
         clauses.append(_STATUS_SQL[f.status])
+    elif with_status and not f.include_filtered:
+        clauses.append(f"NOT ({_STATUS_SQL[FILTERED]})")
     if f.source:
         clauses.append("source = ?")
         params.append(f.source)
@@ -205,6 +210,18 @@ def status_counts(conn: sqlite3.Connection, f: Filters) -> dict[str, int]:
     where, params = _where(f, with_status=False)
     rows = conn.execute(f"SELECT {_VIEW_SQL}, COUNT(*) FROM vacancies{where} GROUP BY 1", params)
     return dict.fromkeys(VIEWS, 0) | {r[0]: r[1] for r in rows}
+
+
+def filter_reason_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    """New vacancies rejected by the filters, grouped by kind ("Место", "Дубль"...)."""
+    rows = conn.execute(
+        "SELECT filter_reason FROM vacancies WHERE " + _STATUS_SQL[FILTERED]
+    ).fetchall()
+    counts: dict[str, int] = {}
+    for (reason,) in rows:
+        kind = re.split(r":| #| до ", reason, maxsplit=1)[0].strip()
+        counts[kind] = counts.get(kind, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
 
 def get_vacancy(conn: sqlite3.Connection, vacancy_id: int) -> sqlite3.Row | None:

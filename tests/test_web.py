@@ -237,3 +237,55 @@ def test_sort_by_barrier_ties_by_score_unscored_last(app):
     add_score(path, 3, 80, 0, 0, barrier="low")
     assert ids_in_order(path, sort="barrier") == [
         "Old Undated Job", "Python Developer", "HR Recruiter <script>"]  # fmt: skip
+
+
+def _reject(path, vid, reason):
+    conn = db.connect(path)
+    conn.execute("UPDATE vacancies SET filter_reason = ? WHERE id = ?", (reason, vid))
+    conn.commit()
+    conn.close()
+
+
+def test_filtered_vacancies_are_hidden_everywhere_on_the_page(app):
+    app, path = app
+    _reject(path, 1, "Оценка: балл 30 < 50")
+    for query in ("", "status=all", "status=filtered"):  # unknown view falls back to "new"
+        _, _, html = request(app, "GET", "/", query)
+        assert "Python Developer" not in html
+        assert "HR Recruiter" in html
+    _, _, html = request(app, "GET", "/")
+    assert "Отсеянные" not in html
+    assert 'Все<span class="n">2</span>' in html  # the filtered one is not counted
+    assert 'Новые<span class="n">2</span>' in html
+
+
+def test_decided_vacancy_shows_even_if_filters_reject_it(app):
+    app, path = app
+    conn = db.connect(path)
+    db.set_status(conn, 1, "apply")
+    conn.close()
+    _reject(path, 1, "Место: Brno")
+    _, _, html = request(app, "GET", "/", "status=apply")
+    assert "Python Developer" in html
+    _, _, html = request(app, "GET", "/", "status=all")
+    assert "Python Developer" in html
+
+
+def test_filtered_vacancy_still_opens_by_direct_link(app):
+    app, path = app
+    _reject(path, 1, "Место: Brno")
+    status, _, html = request(app, "GET", "/v/1")
+    assert status == "200 OK" and "Место: Brno" in html
+
+
+def test_filter_reason_counts_groups_by_kind(app):
+    _, path = app
+    _reject(path, 1, "Оценка: балл 30 < 50")
+    _reject(path, 2, "Оценка: высокий порог входа")
+    _reject(path, 3, "Дубль #7")
+    conn = db.connect(path)
+    assert db.filter_reason_counts(conn) == {"Оценка": 2, "Дубль": 1}
+    conn.execute("UPDATE vacancies SET filter_reason = 'Зарплата до 1 311 €/мес' WHERE id = 2")
+    conn.execute("UPDATE vacancies SET filter_reason = 'Зарплата до 697 €/мес' WHERE id = 3")
+    assert db.filter_reason_counts(conn) == {"Зарплата": 2, "Оценка": 1}
+    conn.close()
