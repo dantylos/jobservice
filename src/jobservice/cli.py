@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import smtplib
 import sys
 
 from dotenv import load_dotenv
@@ -63,8 +64,8 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
     sc.add_argument("-v", "--verbose", action="store_true")
 
-    r = sub.add_parser("report", help="collect + score, then a summary notification (scheduled)")
-    r.add_argument("--no-notify", action="store_true", help="only log the summary")
+    r = sub.add_parser("report", help="collect + score, then a summary by e-mail or notification")
+    r.add_argument("--no-notify", action="store_true", help="only log the summary (no e-mail)")
     r.add_argument("--db", help="SQLite path (env JOBS_DB_PATH, default data/jobs.db)")
     r.add_argument("-v", "--verbose", action="store_true")
 
@@ -172,15 +173,25 @@ def report(args: argparse.Namespace) -> int:
                                            delay=None, refresh=False, **common))  # fmt: skip
     scored = score(argparse.Namespace(profile=None, model=None, limit=None, rescore=False, ids=None,
                                       **common))  # fmt: skip
+    errors = bool(collected or scored)
     conn = db.connect(_db_path(args))
     summary = rep.summarize(conn, since=started)
+    rows = rep.waiting(conn)
     conn.close()
-    message = summary.message()
-    if collected or scored:
-        message += " Были ошибки, см. лог."
+    message = summary.message() + (" Были ошибки, см. лог." if errors else "")
     log.info("report: %s", message)
-    if not args.no_notify:
-        rep.notify("Отчёт по вакансиям готов", message)
+    if args.no_notify:
+        return max(collected, scored)
+    email = rep.EmailConfig.from_env()
+    if email:
+        try:
+            rep.send_email(email, rep.email_subject(summary), rep.email_body(summary, rows, errors))
+            log.info("report e-mailed to %s", email.address)
+            return max(collected, scored)
+        except (OSError, smtplib.SMTPException) as e:
+            log.error("e-mail failed, falling back to a notification: %s", e)
+            message += " Письмо не отправилось, см. лог."
+    rep.notify("Отчёт по вакансиям готов", message)
     return max(collected, scored)
 
 

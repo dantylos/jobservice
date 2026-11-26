@@ -109,3 +109,92 @@ def test_cli_report_no_notify(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "score", lambda args: 0)
     monkeypatch.setattr(report, "notify", lambda *a: 1 / 0)
     assert cli.main(["report", "--no-notify", "--db", str(tmp_path / "j.db")]) == 0
+
+
+# ---- e-mail -------------------------------------------------------------------------------------
+
+
+def test_email_config_from_env():
+    assert report.EmailConfig.from_env({}) is None
+    assert report.EmailConfig.from_env({"JOBS_GMAIL_ADDRESS": "me@x.cz"}) is None
+    cfg = report.EmailConfig.from_env(
+        {"JOBS_GMAIL_ADDRESS": " me@x.cz ", "JOBS_GMAIL_APP_PASSWORD": "abcd efgh ijkl mnop"}
+    )
+    assert (cfg.address, cfg.app_password) == ("me@x.cz", "abcdefghijklmnop")
+
+
+def test_email_goes_only_to_sender():
+    msg = report.build_email(report.EmailConfig("me@x.cz", "pw"), "Тема", "Текст")
+    assert msg["From"] == msg["To"] == "me@x.cz"
+    assert msg["Cc"] is None and msg["Bcc"] is None
+    assert msg["Subject"] == "Тема" and "Текст" in msg.get_content()
+
+
+def test_email_body_lists_waiting_vacancies():
+    conn = db.connect(":memory:")
+    add(conn, "1", "Good QA", "Acme")
+    add(conn, "2", "Unscored")
+    save(conn, 1, 64, barrier="medium")
+    s = report.summarize(conn, since="2000-01-01")
+    body = report.email_body(s, report.waiting(conn), errors=True)
+    assert "1. Good QA (Acme)\n   QA 64, порог средний\n   u/1" in body
+    assert "2. Unscored\n   без оценки" in body
+    assert "были ошибки" in body and report.REVIEW_URL in body
+    assert report.email_subject(s) == "Отчёт по вакансиям: подходят 2, ждут проверки 2"
+    assert "...и ещё 1." in report.email_body(s, report.waiting(conn, limit=1))
+
+
+def test_send_email_uses_gmail_ssl(monkeypatch):
+    sent = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            sent["server"] = (host, port)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def login(self, user, password):
+            sent["login"] = (user, password)
+
+        def send_message(self, msg, from_addr, to_addrs):
+            sent["to"] = to_addrs
+
+    monkeypatch.setattr(report.smtplib, "SMTP_SSL", FakeSMTP)
+    report.send_email(report.EmailConfig("me@x.cz", "pw"), "S", "B")
+    assert sent == {"server": ("smtp.gmail.com", 465), "login": ("me@x.cz", "pw"),
+                    "to": ["me@x.cz"]}  # fmt: skip
+
+
+def _cli_with_email(tmp_path, monkeypatch, send):
+    from jobservice import cli
+
+    monkeypatch.setenv("JOBS_GMAIL_ADDRESS", "me@x.cz")
+    monkeypatch.setenv("JOBS_GMAIL_APP_PASSWORD", "pw")
+    monkeypatch.setattr(cli, "collect", lambda args: 0)
+    monkeypatch.setattr(cli, "score", lambda args: 0)
+    notes = []
+    monkeypatch.setattr(report, "send_email", send)
+    monkeypatch.setattr(report, "notify", lambda title, msg: notes.append(msg))
+    code = cli.main(["report", "--db", str(tmp_path / "j.db")])
+    return code, notes
+
+
+def test_cli_report_emails_instead_of_notifying(tmp_path, monkeypatch):
+    mails = []
+    code, notes = _cli_with_email(tmp_path, monkeypatch, lambda cfg, s, b: mails.append(s))
+    assert code == 0 and notes == []
+    assert mails == ["Отчёт по вакансиям: подходят 0, ждут проверки 0"]
+
+
+def test_cli_report_falls_back_to_notification_when_email_fails(tmp_path, monkeypatch):
+    import smtplib
+
+    def fail(cfg, s, b):
+        raise smtplib.SMTPAuthenticationError(535, b"bad credentials")
+
+    code, notes = _cli_with_email(tmp_path, monkeypatch, fail)
+    assert code == 0 and notes[0].endswith("Письмо не отправилось, см. лог.")

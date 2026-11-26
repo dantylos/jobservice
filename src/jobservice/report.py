@@ -2,14 +2,20 @@
 
 import json
 import logging
+import os
+import smtplib
 import sqlite3
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
+from email.message import EmailMessage
 
 log = logging.getLogger(__name__)
 
 TRACK_LABELS = {"ai": "AI", "qa": "QA", "hr": "HR"}
+BARRIER_LABELS = {"low": "низкий", "medium": "средний", "high": "высокий"}
+REVIEW_URL = "http://127.0.0.1:8000/?sort=score"
 
 
 @dataclass(slots=True)
@@ -67,3 +73,74 @@ def notify(title: str, message: str) -> bool:
         log.warning("notification failed: %s", e)
         return False
     return True
+
+
+# --- e-mail (Gmail SMTP, only to the sender's own address) ---------------------------------------
+
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 465  # implicit TLS
+
+
+@dataclass(slots=True)
+class EmailConfig:
+    address: str
+    app_password: str  # a Google "app password", not the account password
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] = os.environ) -> "EmailConfig | None":
+        address = env.get("JOBS_GMAIL_ADDRESS", "").strip()
+        password = env.get("JOBS_GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
+        return cls(address, password) if address and password else None
+
+
+def waiting(conn: sqlite3.Connection, limit: int = 15) -> list[sqlite3.Row]:
+    """Vacancies waiting for a decision, best score first (unscored last)."""
+    return conn.execute(
+        "SELECT v.title, v.company, v.city, v.url, s.score, s.best_track, s.entry_barrier "
+        f"FROM vacancies v LEFT JOIN scores s ON s.vacancy_id = v.id WHERE {_WAITING} "
+        "ORDER BY s.score IS NULL, s.score DESC, v.id DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+
+
+def email_subject(summary: Summary) -> str:
+    return f"Отчёт по вакансиям: подходят {summary.passed}, ждут проверки {summary.to_review}"
+
+
+def email_body(summary: Summary, rows: list[sqlite3.Row], errors: bool = False) -> str:
+    lines = [summary.message(), ""]
+    if errors:
+        lines += ["Во время сбора или оценки были ошибки: ~/Library/Logs/jobservice-report.log", ""]
+    if rows:
+        lines.append("Ждут проверки:")
+        for i, r in enumerate(rows, start=1):
+            if r["score"] is None:
+                score = "без оценки"
+            else:
+                track = TRACK_LABELS.get(r["best_track"], r["best_track"])
+                barrier = BARRIER_LABELS.get(r["entry_barrier"], r["entry_barrier"])
+                score = f"{track} {r['score']}, порог {barrier}"
+            where = ", ".join(x for x in (r["company"], r["city"]) if x)
+            lines += [f"{i}. {r['title']}" + (f" ({where})" if where else ""),
+                      f"   {score}", f"   {r['url']}"]  # fmt: skip
+        if summary.to_review > len(rows):
+            lines.append(f"...и ещё {summary.to_review - len(rows)}.")
+        lines.append("")
+    lines.append(f"Страница проверки (после `uv run jobservice serve`): {REVIEW_URL}")
+    return "\n".join(lines)
+
+
+def build_email(cfg: EmailConfig, subject: str, body: str) -> EmailMessage:
+    msg = EmailMessage()
+    msg["From"] = cfg.address
+    msg["To"] = cfg.address  # never anyone else: this is a report to myself
+    msg["Subject"] = subject
+    msg.set_content(body)
+    return msg
+
+
+def send_email(cfg: EmailConfig, subject: str, body: str, timeout: float = 30) -> None:
+    msg = build_email(cfg, subject, body)
+    with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=timeout) as smtp:
+        smtp.login(cfg.address, cfg.app_password)
+        smtp.send_message(msg, from_addr=cfg.address, to_addrs=[cfg.address])
