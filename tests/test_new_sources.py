@@ -187,3 +187,10 @@ def test_source_stops_after_failures_in_a_row(fixture):
 def test_slow_sites_ask_for_a_longer_pause():
     for cls in (nfj.NoFluffJobs, eurj.EuRemoteJobs, nlj.NextLevelJobs):
         assert cls.request_delay >= 3
+
+
+def test_titles_are_unescaped():
+    v = eurj.from_posting("pe", "u", {"title": "Product Engineer &#8211; Integrations &amp; AI"})
+    assert v.title == "Product Engineer – Integrations & AI"
+    page = '<script type="application/ld+json">{"@type": "JobPosting", "title": "QA &amp; Test"}</script>'  # noqa: E501
+    assert nlj.from_page("1", "u", page).title == "QA & Test"

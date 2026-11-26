@@ -9,6 +9,7 @@ decided on 2026-11-26 to collect anyway, for personal job search only, at their 
 Requests are paced by HttpClient like every other source.
 """
 
+import html as htmllib
 import logging
 import os
 import re
@@ -50,7 +51,7 @@ def from_posting(slug: str, url: str, posting: dict) -> Vacancy:
     return Vacancy(
         source="euremotejobs",
         external_id=slug,
-        title=str(posting.get("title") or slug).strip(),
+        title=htmllib.unescape(str(posting.get("title") or slug)).strip(),
         url=url,
         company=places.company(posting),
         description_html=posting.get("description") or None,

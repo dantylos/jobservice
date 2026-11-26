@@ -7,6 +7,7 @@ JOBS_NEXTLEVELJOBS_MAX_PAGES are opened per run and the rest follow on later run
 robots.txt (checked 2026-11-26) allows everything; the terms do not mention automated access.
 """
 
+import html as htmllib
 import logging
 import os
 import re
@@ -57,7 +58,7 @@ def from_page(job_id: str, url: str, page: str) -> Vacancy | None:
     return Vacancy(
         source="nextleveljobs",
         external_id=job_id,
-        title=str(posting.get("title") or "").strip() or job_id,
+        title=htmllib.unescape(str(posting.get("title") or "")).strip() or job_id,
         url=url,
         company=places.company(posting),
         city=city,
