@@ -11,6 +11,17 @@ USER_AGENT = "jobservice/0.1 (personal job-search collector)"
 _RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
+_MAX_RETRY_AFTER = 300.0
+
+
+def retry_after(header: str | None, default: float) -> float:
+    """Seconds from a Retry-After header (seconds form), capped; default when absent or a date."""
+    try:
+        return min(max(float(header), 0.0), _MAX_RETRY_AFTER)
+    except (TypeError, ValueError):
+        return min(default, _MAX_RETRY_AFTER)
+
+
 class HttpClient:
     def __init__(
         self,
@@ -58,5 +69,8 @@ class HttpClient:
                     resp.raise_for_status()
                     return resp
                 log.warning("%s %s -> %d, retry %d", method, url, resp.status_code, attempt)
+                if resp.status_code == 429:  # the site asked to slow down: wait as long as it says
+                    time.sleep(retry_after(resp.headers.get("Retry-After"), self.delay * 30))
+                    continue
             time.sleep(self.delay * 2**attempt)
         raise AssertionError("unreachable")

@@ -105,6 +105,8 @@ def collect(args: argparse.Namespace) -> int:
     with HttpClient(delay=delay) as http:
         for name in args.sources or sorted(SOURCES):
             source = SOURCES[name](http)
+            # Some sites throttle sooner than others: a source may ask for a longer pause.
+            http.delay = max(delay, getattr(source, "request_delay", 0))
             column = getattr(source, "detail_column", "description_text")
             skip = set() if args.refresh else db.ids_with_description(conn, name, column)
             new = total = 0

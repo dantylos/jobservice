@@ -19,7 +19,8 @@ apply, later or skip.
    (`jobservice filter --stats` prints a summary).
    Vacancies belong to a market, Czechia or Ukraine (remote), each with its own tab and
    salary minimum (`JOBS_MIN_SALARY_EUR`, `JOBS_MIN_SALARY_EUR_UA`).
-   - **Location:** a chosen city or remote work.
+   - **Location:** a chosen city or remote work; remote work only for other countries
+     ("Poland only") is rejected on the Czech tab.
    - **Salary:** top of the range below a monthly minimum in EUR (CZK converted, hourly × 160).
    - **Seniority:** senior / lead / head / principal titles.
    - **Language:** Czech required above B1, or another language besides English, Russian and
@@ -49,6 +50,15 @@ apply, later or skip.
 - **Djinni** (Ukrainian remote market): its official RSS feeds (`JOBS_DJINNI_*`); company,
   salary and applicant location come from the schema.org JobPosting data on the vacancy page,
   fetched once per new vacancy.
+- **NoFluffJobs:** its RSS feed of all offers; only offers whose link names Prague or remote
+  work (and no senior title) are opened for the schema.org JobPosting data.
+- **EU Remote Jobs:** the newest job sitemap; each new listing page is opened once for its
+  JobPosting data. The site's terms forbid automated collection; I collect anyway, for my own
+  job search only, at my own risk.
+- **Next Level Jobs:** the job sitemap; each new page is opened once for its JobPosting data and
+  experience level. At most `JOBS_NEXTLEVELJOBS_MAX_PAGES` pages per run.
+- Vacancies from these three sites go to the Czech tab, or to the Ukrainian one when the job is
+  in Ukraine or only for people living there.
 - **Jobs.cz:** search-result HTML, then each ad page (JSON-LD where available). Ads on
   employer-branded templates (`*.jobs.cz/detail-pozice`) are rendered by JavaScript, so only the
   short `og:description` summary is stored for them.
@@ -86,6 +96,7 @@ every push.
 - [x] Ukrainian remote vacancies from DOU.ua and Djinni (RSS)
 - [x] Hard filters and duplicate merging
 - [x] Local review page
+- [x] NoFluffJobs, EU Remote Jobs, Next Level Jobs
 - [ ] More sources: Prace.cz, e-mail job alerts
 - [x] LLM scoring of each ad against my profile, with "why it fits / what is missing"
 - [ ] Tailored CV (DOCX + PDF) and cover letter for approved ads

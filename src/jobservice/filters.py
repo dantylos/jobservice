@@ -13,6 +13,7 @@ import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from jobservice.places import open_to_czechia
 from jobservice.text import slugify
 
 _HOURS_PER_MONTH = 160
@@ -78,6 +79,17 @@ def check_location(row: Mapping, cfg: FilterConfig) -> str | None:
     return f"Место: {row['city']}"
 
 
+def check_remote_region(row: Mapping, cfg: FilterConfig) -> str | None:
+    """Remote work the candidate cannot take from Czechia ("Poland only")."""
+    data = dict(row)
+    if data.get("market") == "ua":  # the Ukrainian tab only marks it (see scoring.py)
+        return None
+    location = data.get("applicant_location")
+    if "remote" not in (data.get("work_mode") or "").split(",") or open_to_czechia(location):
+        return None
+    return f"Место: удалённо только для {location}"
+
+
 # ---- salary ---------------------------------------------------------------------------
 
 
@@ -131,10 +143,15 @@ def check_seniority(row: Mapping, cfg: FilterConfig) -> str | None:
         if levels & {"junior", "medior"}:
             return None
         return "Уровень: " + ", ".join(sorted(levels))
-    title = slugify(row["title"] or "").replace("-", " ")
-    title = _NOT_SENIOR.sub("", title)
+    word = senior_word(row["title"] or "")
+    return f"Уровень: {word} (в названии)" if word else None
+
+
+def senior_word(title: str) -> str | None:
+    """The word that marks a senior title ("senior", "lead"...), also for URL slugs."""
+    title = _NOT_SENIOR.sub("", slugify(title).replace("-", " "))
     m = _SENIOR_TITLE.search(title)
-    return f"Уровень: {m.group(1)} (в названии)" if m else None
+    return m.group(1) if m else None
 
 
 # ---- languages ------------------------------------------------------------------------
@@ -248,7 +265,14 @@ def check_score(row: Mapping, cfg: FilterConfig) -> str | None:
 
 # ---- all together ---------------------------------------------------------------------
 
-CHECKS = (check_location, check_seniority, check_salary, check_languages, check_score)
+CHECKS = (
+    check_location,
+    check_remote_region,
+    check_seniority,
+    check_salary,
+    check_languages,
+    check_score,
+)
 
 
 def evaluate(row: Mapping, cfg: FilterConfig) -> str | None:

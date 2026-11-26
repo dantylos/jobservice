@@ -37,6 +37,9 @@ SOURCE_LABELS = {
     "startupjobs": "StartupJobs",
     "dou": "DOU.ua",
     "djinni": "Djinni",
+    "nofluffjobs": "NoFluffJobs",
+    "euremotejobs": "EU Remote Jobs",
+    "nextleveljobs": "Next Level Jobs",
 }
 TRACK_LABELS = {"ai": "AI", "qa": "QA", "hr": "HR"}
 BARRIER_LABELS = {"low": "низкий порог", "medium": "средний порог", "high": "высокий порог"}
