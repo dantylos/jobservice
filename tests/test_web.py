@@ -346,6 +346,28 @@ def test_list_marks_applicant_location(app):
                             url="https://ua/d1", market="ua", applicant_location="UA"))  # fmt: skip
     conn.close()
     _, _, html = request(app, "GET", "/", "market=ua")
-    assert "UA only job" in html and "· кандидаты из: UA</div>" in html
+    assert "UA only job" in html
+    assert '· <span class="warn">кандидаты из: UA</span></div>' in html  # "UA only" stands out
     _, _, html = request(app, "GET", "/")
     assert "кандидаты из" not in html  # Czech rows have no location stated
+
+
+def test_helpers_for_readable_meta():
+    from datetime import date
+
+    from jobservice.web import _date, _languages, _meta, _rows
+
+    row = {"published_at": "2026-11-17T10:00:00Z", "published_raw": None}
+    assert _date(row, today=date(2026, 11, 26)) == "17 ноя"
+    assert _date(row, today=date(2027, 1, 2)) == "17 ноя 2026"
+    assert _date({"published_at": None, "published_raw": None}) == ""
+    assert _date({"published_at": "bad", "published_raw": "вчера"}) == "вчера"
+    assert _meta("Firm", None, "", "Praha <b>") == "Firm · Praha &lt;b&gt;"
+    assert _languages("english:professional,czech:") == "English — professional, Czech"
+    assert _rows("short") == 8 and _rows("x" * 900 + "\n\n" + "y") == 13
+
+
+def test_city_field_only_on_czech_tab(app):
+    app, _ = app
+    assert 'placeholder="Город"' in request(app, "GET", "/")[2]
+    assert 'placeholder="Город"' not in request(app, "GET", "/", "market=ua")[2]

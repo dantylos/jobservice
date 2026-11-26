@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import subprocess
+from datetime import date
 from html import escape
 from pathlib import Path
 from socketserver import ThreadingMixIn
@@ -140,7 +141,8 @@ def _pitch_block(conn, v) -> str:
     return (
         f'<section class="pitch" data-id="{v["id"]}" data-auto="{int(auto)}">'
         f'<div><b>{_e(heading)}</b> <span class="meta" id="pitch-status">{status}</span></div>'
-        f'<textarea id="pitch-text" rows="10">{_e(stored["text"]) if stored else ""}</textarea>'
+        f'<textarea id="pitch-text" rows="{_rows(stored["text"] if stored else "")}">'
+        f"{_e(stored['text']) if stored else ''}</textarea>"
         '<div class="pitch-actions"><button type="button" id="pitch-copy">Копировать</button>'
         f'<button type="button" id="pitch-regen">{button}</button></div></section>'
     )
@@ -150,10 +152,49 @@ def _view(row) -> str:
     return FILTERED if row["status"] == "new" and row["filter_reason"] else row["status"]
 
 
-def _date(row) -> str:
-    if row["published_at"]:
-        return row["published_at"][:10]
-    return row["published_raw"] or "—"
+_MONTHS = ("янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек")
+
+
+def _date(row, today: date | None = None) -> str:
+    """'17 ноя' (the year only when it is not the current one); '' when unknown."""
+    raw = row["published_at"]
+    try:
+        d = date.fromisoformat(raw[:10]) if raw else None
+    except ValueError:
+        d = None
+    if d is None:
+        return row["published_raw"] or ""
+    text = f"{d.day} {_MONTHS[d.month - 1]}"
+    return text if d.year == (today or date.today()).year else f"{text} {d.year}"
+
+
+def _rows(text: str, width: int = 90) -> int:
+    """Rough height of a text in lines, so the whole letter shows even without JavaScript."""
+    lines = sum(max(1, -(-len(line) // width)) for line in text.split("\n"))
+    return max(8, lines + 1)
+
+
+def _meta(*parts: str | None) -> str:
+    """Escaped, non-empty parts joined with " · " (missing fields are left out, not "—")."""
+    return " · ".join(_e(p) for p in parts if p)
+
+
+def _languages(value: str | None) -> str:
+    """'english:professional,czech:' -> 'English — professional, Czech'."""
+    out = []
+    for item in (value or "").split(","):
+        name, _, level = item.partition(":")
+        if name.strip():
+            out.append(name.strip().capitalize() + (f" — {level.strip()}" if level.strip() else ""))
+    return ", ".join(out)
+
+
+def _location(value: str | None) -> str:
+    """Applicant location; "UA only" is highlighted, it may rule out living in Prague."""
+    if not value:
+        return ""
+    cls = "warn" if {x.strip() for x in value.split(",")} == {"UA"} else ""
+    return f'<span class="{cls}">кандидаты из: {_e(value)}</span>'
 
 
 def _e(value) -> str:
@@ -171,19 +212,28 @@ body { margin:0; background:var(--bg); color:var(--fg);
   font:15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 main { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
 a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
-h1 { font-size: 22px; margin: 0 0 16px; } h1 a { color: inherit; }
-.tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
-.tabs a { padding:6px 12px; border-radius:999px; background:var(--card); color:var(--fg); }
+h1 { font-size: 22px; margin: 0 0 16px; line-height:1.3; } h1 a { color: inherit; }
+h1.top { margin-bottom:28px; }
+.tabs { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:24px; }
+.tabs a { padding:5px 12px; border-radius:999px; background:var(--card); color:var(--fg);
+  font-size:14px; }
 .tabs a.on { background:var(--fg); color:var(--bg); }
 .tabs .n { color:var(--muted); margin-left:4px; } .tabs a.on .n { color:inherit; opacity:.7; }
-.tabs.markets a { border-radius:8px; font-weight:600; }
-form.filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+/* Markets: the main switch, larger and outlined; statuses below are small pills. */
+.tabs.markets { gap:8px; margin-bottom:20px; }
+.tabs.markets a { font-size:16px; font-weight:600; padding:9px 18px; border-radius:10px;
+  background:transparent; border:1px solid var(--line); }
+.tabs.markets a.on { background:var(--accent); border-color:var(--accent); color:var(--bg); }
+.warn { color:var(--later); font-weight:600; }
+h2.sec { font-size:15px; margin:28px 0 8px; }
+form.filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:24px; }
 input, select, button { font:inherit; padding:6px 10px; border:1px solid var(--line);
   border-radius:8px; background:var(--bg); color:var(--fg); }
 input[name=q] { flex: 1 1 220px; }
 button { cursor:pointer; background:var(--card); }
 .list { list-style:none; margin:0; padding:0; border-top:1px solid var(--line); }
-.list li { padding:10px 2px; border-bottom:1px solid var(--line); }
+.list li { padding:12px 2px; border-bottom:1px solid var(--line); }
+.list .meta { margin-top:3px; }
 .list .t { font-weight:600; }
 .meta { color:var(--muted); font-size:13px; }
 .badge { font-size:12px; padding:1px 8px; border-radius:999px; border:1px solid currentColor; }
@@ -191,7 +241,8 @@ button { cursor:pointer; background:var(--card); }
 .s-later { color:var(--later); } .s-skip { color:var(--skip); }
 .empty { color:var(--muted); padding:24px 0; }
 .desc { white-space:pre-wrap; background:var(--card); padding:16px; border-radius:10px;
-  margin:16px 0; overflow-wrap:anywhere; }
+  margin:0 0 24px; overflow-wrap:anywhere; }
+.facts { margin-top:4px; }
 .note { color:var(--muted); font-size:13px; }
 .actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; position:sticky;
   bottom:0; background:var(--bg); padding:12px 0 calc(12px + env(safe-area-inset-bottom, 0px));
@@ -205,11 +256,11 @@ kbd { font-size:11px; color:var(--muted); }
   background:var(--card); white-space:nowrap; }
 .score.hi { color:var(--apply); } .score.mid { color:var(--later); }
 .score.lo { color:var(--muted); }
-.fit { border:1px solid var(--line); border-radius:10px; padding:12px 16px; margin:16px 0; }
+.fit { border:1px solid var(--line); border-radius:10px; padding:14px 18px; margin:24px 0; }
 .fit .cols { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
   gap:8px 24px; margin-top:8px; }
 .fit ul { margin:4px 0 0; padding-left:18px; } .fit li { margin:2px 0; }
-.pitch { border:1px solid var(--line); border-radius:10px; padding:12px 16px; margin:16px 0; }
+.pitch { border:1px solid var(--line); border-radius:10px; padding:14px 18px; margin:24px 0; }
 .pitch textarea { width:100%; margin:8px 0; font:inherit; padding:10px; border-radius:8px;
   border:1px solid var(--line); background:var(--bg); color:var(--fg); resize:vertical; }
 .pitch-actions { display:flex; gap:8px; }
@@ -231,6 +282,10 @@ if (box) {
   const status = document.getElementById('pitch-status');
   const regen = document.getElementById('pitch-regen');
   const copy = document.getElementById('pitch-copy');
+  // The whole letter is visible: the field grows with its text.
+  function fit() { text.style.height = 'auto'; text.style.height = (text.scrollHeight + 2) + 'px'; }
+  text.addEventListener('input', fit);
+  fit();
   async function generate() {
     regen.disabled = true;
     status.textContent = 'Генерирую текст, 10–20 секунд…';
@@ -239,6 +294,7 @@ if (box) {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || r.status);
       text.value = d.text;
+      fit();
       status.textContent = 'Готово · ' + d.language.toUpperCase();
       regen.textContent = 'Сгенерировать заново';
     } catch (e) {
@@ -302,8 +358,12 @@ def render_list(conn, f: Filters) -> bytes:
         f'<input type="hidden" name="market" value="{_e(f.market)}">'
         f'<input type="hidden" name="status" value="{_e(f.status or "all")}">'
         f'<input name="q" value="{_e(f.q)}" placeholder="Поиск: должность, компания, текст">'
-        f'<input name="city" value="{_e(f.city)}" placeholder="Город">'
-        f'<select name="source"><option value="">Все сайты</option>{sources}</select>'
+        + (
+            f'<input name="city" value="{_e(f.city)}" placeholder="Город">'
+            if f.market != "ua"
+            else ""
+        )  # Ukrainian vacancies are all remote
+        + f'<select name="source"><option value="">Все сайты</option>{sources}</select>'
         f'<select name="sort">{sorts}</select>'
         "<button>Найти</button></form>"
     )
@@ -315,21 +375,20 @@ def render_list(conn, f: Filters) -> bytes:
         view = _view(r)
         if view != "new" and f.status is None:
             badge = f' <span class="badge s-{view}">{STATUS_LABELS[view]}</span>'
-        reason = f" · {_e(r['status_reason'])}" if r["status_reason"] else ""
-        if r["applicant_location"]:  # e.g. "UA": the employer wants applicants living there
-            reason += f" · кандидаты из: {_e(r['applicant_location'])}"
+        meta = _meta(r["company"], r["city"], _date(r), SOURCE_LABELS.get(r["source"], r["source"]),
+                     r["status_reason"])  # fmt: skip
+        if r["applicant_location"]:
+            meta += " · " + _location(r["applicant_location"])
         items.append(
             f'<li><a class="t" href="/v/{r["id"]}?{filters_qs(f)}">{_e(r["title"])}</a>'
-            f"{_score_badge(r, f.sort)}{badge}"
-            f'<div class="meta">{_e(r["company"]) or "—"} · {_e(r["city"]) or "—"} · '
-            f"{_e(_date(r))} · {SOURCE_LABELS.get(r['source'], r['source'])}{reason}</div></li>"
+            f'{_score_badge(r, f.sort)}{badge}<div class="meta">{meta}</div></li>'
         )
     listing = (
         f'<ul class="list">{"".join(items)}</ul>'
         if items
         else ('<p class="empty">Ничего не найдено.</p>')
     )
-    return page("Вакансии", f'<h1><a href="/">Вакансии</a></h1>'
+    return page("Вакансии", f'<h1 class="top"><a href="/">Вакансии</a></h1>'
                 f'<nav class="tabs markets">{markets}</nav><nav class="tabs">'
                 f'{"".join(tabs)}</nav>{filters}{listing}')  # fmt: skip
 
@@ -377,19 +436,22 @@ def render_detail(conn, vacancy_id: int, f: Filters) -> bytes | None:
         _salary(v),
         ", ".join(_MODES.get(m, m) for m in (v["work_mode"] or "").split(",") if m),
         (v["seniority"] or "").replace(",", ", "),
-        (v["languages"] or "").replace(",", ", "),
-        f"кандидаты из: {v['applicant_location']}" if v["applicant_location"] else None,
+        _languages(v["languages"]),
     ]
-    facts_html = " · ".join(_e(x) for x in facts if x)
+    facts_html = _meta(*facts)
+    if v["applicant_location"]:
+        facts_html += (" · " if facts_html else "") + _location(v["applicant_location"])
     body = (
         f'<p><a href="/?{filters_qs(f)}">← К списку</a></p>'
         f"<h1>{_e(v['title'])}</h1>"
-        f'<div class="meta">{_e(v["company"]) or "—"} · {_e(v["city"]) or "—"} · '
-        f"{_e(_date(v))} · {SOURCE_LABELS.get(v['source'], v['source'])} · "
+        f'<div class="meta">{
+            _meta(v["company"], v["city"], _date(v), SOURCE_LABELS.get(v["source"], v["source"]))
+        } · '
         f'<a href="{_e(v["url"])}" target="_blank" rel="noopener noreferrer">'
         "Открыть на сайте ↗</a></div>"
-        + (f'<div class="meta">{facts_html}</div>' if facts_html else "")
+        + (f'<div class="meta facts">{facts_html}</div>' if facts_html else "")
         + f"{status}{_score_block(v)}{_pitch_block(conn, v)}{note}"
+        '<h2 class="sec">Описание вакансии</h2>'
         f'<div class="desc">{_e(v["description_text"]) or "Описание не сохранено."}</div>'
         f"{actions}"
     )
