@@ -86,6 +86,7 @@ _MIGRATIONS = {
     # Why the hard filters rejected this vacancy (None = passed). Recomputed by filters.py.
     "filter_reason": "ALTER TABLE vacancies ADD COLUMN filter_reason TEXT",
     "market": "ALTER TABLE vacancies ADD COLUMN market TEXT NOT NULL DEFAULT 'cz'",
+    "applicant_location": "ALTER TABLE vacancies ADD COLUMN applicant_location TEXT",
 }
 
 MARKETS = ("cz", "ua")
@@ -106,9 +107,14 @@ def connect(path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def ids_with_description(conn: sqlite3.Connection, source: str) -> set[str]:
+def ids_with_description(
+    conn: sqlite3.Connection, source: str, column: str = "description_text"
+) -> set[str]:
+    """External ids whose detail is already stored, judged by `column` being filled."""
+    if column not in ("description_text", "company"):
+        raise ValueError(f"unexpected column {column!r}")
     rows = conn.execute(
-        "SELECT external_id FROM vacancies WHERE source = ? AND description_text IS NOT NULL",
+        f"SELECT external_id FROM vacancies WHERE source = ? AND {column} IS NOT NULL",
         (source,),
     )
     return {r[0] for r in rows}

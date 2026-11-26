@@ -112,7 +112,7 @@ def check_salary(row: Mapping, cfg: FilterConfig) -> str | None:
     if not top:
         return None
     eur = monthly_eur(top, row["salary_currency"], row["salary_period"], cfg.eur_czk, cfg.eur_usd)
-    if eur is not None and eur < minimum:
+    if eur is not None and round(eur, 2) < minimum:  # $1100 / 1.1 must not fall below 1000
         return f"Зарплата до {eur:,.0f} €/мес".replace(",", " ")
     return None
 

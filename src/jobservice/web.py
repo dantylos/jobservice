@@ -31,7 +31,12 @@ STATUS_LABELS = {
 MARKET_LABELS = {"cz": "Чехия", "ua": "Украина (remote)"}
 _PERIODS = {"month": "мес", "hour": "час", "day": "день", "year": "год", "week": "нед"}
 _MODES = {"remote": "удалённо", "hybrid": "гибрид", "onsite": "в офисе"}
-SOURCE_LABELS = {"jobscz": "Jobs.cz", "startupjobs": "StartupJobs", "dou": "DOU.ua"}
+SOURCE_LABELS = {
+    "jobscz": "Jobs.cz",
+    "startupjobs": "StartupJobs",
+    "dou": "DOU.ua",
+    "djinni": "Djinni",
+}
 TRACK_LABELS = {"ai": "AI", "qa": "QA", "hr": "HR"}
 BARRIER_LABELS = {"low": "низкий порог", "medium": "средний порог", "high": "высокий порог"}
 SORT_LABELS = {
@@ -371,6 +376,7 @@ def render_detail(conn, vacancy_id: int, f: Filters) -> bytes | None:
         ", ".join(_MODES.get(m, m) for m in (v["work_mode"] or "").split(",") if m),
         (v["seniority"] or "").replace(",", ", "),
         (v["languages"] or "").replace(",", ", "),
+        f"кандидаты из: {v['applicant_location']}" if v["applicant_location"] else None,
     ]
     facts_html = " · ".join(_e(x) for x in facts if x)
     body = (

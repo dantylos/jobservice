@@ -25,6 +25,8 @@ class Vacancy:
     languages: str | None = None  # comma-separated "language:level", e.g. "czech:advanced"
     # Job market the vacancy belongs to: "cz" (Czech sites) or "ua" (Ukrainian remote sites).
     market: str = "cz"
+    # Where applicants must live, as the site states it (e.g. "UA", "Europe"); None = not stated.
+    applicant_location: str | None = None
 
 
 @dataclass(slots=True)

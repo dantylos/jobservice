@@ -93,6 +93,14 @@ def test_collect_reads_every_feed_dedups_and_survives_errors(fixture, monkeypatc
     assert all(v.work_mode == "remote" for v in vacancies)
 
 
+def test_salary_exactly_at_the_minimum_passes():
+    from jobservice.filters import check_salary
+
+    r = {"salary_min": 900, "salary_max": 1100, "salary_currency": "USD",
+         "salary_period": "month", "market": "ua"}  # fmt: skip
+    assert check_salary(r, FilterConfig(min_salary_eur_ua=1000, eur_usd=1.1)) is None
+
+
 def test_usd_salary_is_converted():
     assert monthly_eur(1100, "USD", "month", 25, 1.1) == pytest.approx(1000)
     assert monthly_eur(1100, "USD", "month", 25) is None  # no rate given: don't judge

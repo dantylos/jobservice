@@ -44,6 +44,9 @@ apply, later or skip.
 - **StartupJobs:** the JSON API the site itself uses.
 - **DOU.ua** (Ukrainian remote market): the site's official RSS feeds of remote vacancies,
   per category (`JOBS_DOU_CATEGORIES`) and experience bucket (`JOBS_DOU_EXPERIENCE`).
+- **Djinni** (Ukrainian remote market): its official RSS feeds (`JOBS_DJINNI_*`); company,
+  salary and applicant location come from the schema.org JobPosting data on the vacancy page,
+  fetched once per new vacancy.
 - **Jobs.cz:** search-result HTML, then each ad page (JSON-LD where available). Ads on
   employer-branded templates (`*.jobs.cz/detail-pozice`) are rendered by JavaScript, so only the
   short `og:description` summary is stored for them.
@@ -78,7 +81,7 @@ every push.
 ## Roadmap
 
 - [x] Collection from Jobs.cz and StartupJobs
-- [x] Ukrainian remote vacancies from DOU.ua (RSS)
+- [x] Ukrainian remote vacancies from DOU.ua and Djinni (RSS)
 - [x] Hard filters and duplicate merging
 - [x] Local review page
 - [ ] More sources: Prace.cz, e-mail job alerts
