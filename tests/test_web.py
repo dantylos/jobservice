@@ -153,6 +153,7 @@ def test_migrates_old_database(tmp_path):
     old.close()
     conn = db.connect(path)
     assert db.get_vacancy(conn, 1)["status"] == "new"
+    assert db.get_vacancy(conn, 1)["market"] == "cz"
     conn.close()
 
 
@@ -289,3 +290,50 @@ def test_filter_reason_counts_groups_by_kind(app):
     conn.execute("UPDATE vacancies SET filter_reason = 'Зарплата до 697 €/мес' WHERE id = 3")
     assert db.filter_reason_counts(conn) == {"Зарплата": 2, "Оценка": 1}
     conn.close()
+
+
+def _add_ua(path, ext, title):
+    conn = db.connect(path)
+    db.upsert(conn, Vacancy(source="dou", external_id=ext, title=title, url=f"https://ua/{ext}",
+                            company="UA Firm", work_mode="remote", market="ua"))  # fmt: skip
+    conn.close()
+
+
+def test_market_tabs_split_lists_and_counts(app):
+    app, path = app
+    _add_ua(path, "u1", "Remote QA Kyiv")
+    _, _, html = request(app, "GET", "/")
+    assert 'class="on" href="/?market=cz&status=new"' in html
+    assert 'Чехия<span class="n">3</span>' in html
+    assert 'Украина (remote)<span class="n">1</span>' in html
+    assert "Python Developer" in html and "Remote QA Kyiv" not in html
+
+    _, _, html = request(app, "GET", "/", "market=ua")
+    assert "Remote QA Kyiv" in html and "Python Developer" not in html
+    assert 'Новые<span class="n">1</span>' in html
+    assert '<input type="hidden" name="market" value="ua">' in html
+    # links inside the Ukrainian tab keep the market
+    assert 'href="/v/4?market=ua' in html
+
+
+def test_market_switch_keeps_sort_but_drops_search(app):
+    app, path = app
+    _, _, html = request(app, "GET", "/", "q=python&city=Praha&sort=score")
+    assert 'href="/?market=ua&status=new&sort=score"' in html
+
+
+def test_unknown_market_falls_back_to_czech(app):
+    app, path = app
+    _add_ua(path, "u1", "Remote QA Kyiv")
+    _, _, html = request(app, "GET", "/", "market=xx")
+    assert "Python Developer" in html and "Remote QA Kyiv" not in html
+
+
+def test_decision_in_ua_tab_moves_to_next_ua_vacancy(app):
+    app, path = app
+    _add_ua(path, "u1", "Remote QA One")
+    _add_ua(path, "u2", "Remote QA Two")
+    status, headers, _ = request(app, "POST", "/v/5/status",
+                                 form={"status": "skip", "f_market": "ua"})  # fmt: skip
+    assert status.startswith("303")
+    assert headers["Location"].startswith("/v/4?") and "market=ua" in headers["Location"]

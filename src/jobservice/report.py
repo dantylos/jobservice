@@ -8,12 +8,13 @@ import sqlite3
 import subprocess
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.message import EmailMessage
 
 log = logging.getLogger(__name__)
 
 TRACK_LABELS = {"ai": "AI", "qa": "QA", "hr": "HR"}
+MARKET_LABELS = {"cz": "Чехия", "ua": "Украина remote"}
 BARRIER_LABELS = {"low": "низкий", "medium": "средний", "high": "высокий"}
 REVIEW_URL = "http://127.0.0.1:8000/?sort=score"
 
@@ -24,12 +25,16 @@ class Summary:
     passed: int  # ...of them, passed all filters including the score threshold
     to_review: int  # all new vacancies waiting for a decision
     best: sqlite3.Row | None  # best-scored vacancy waiting for a decision
+    # Per market: (passed in this run, waiting overall). Empty while only Czech sites are used.
+    markets: dict[str, tuple[int, int]] = field(default_factory=dict)
 
     def message(self) -> str:
         text = (
             f"Новых вакансий: {self.found}, подходят: {self.passed}. "
             f"Ждут проверки: {self.to_review}."
         )
+        for market, (passed, waiting) in self.markets.items():
+            text += f" {MARKET_LABELS.get(market, market)}: подходят {passed}, ждут {waiting}."
         if self.best is not None:
             track = TRACK_LABELS.get(self.best["best_track"], self.best["best_track"])
             company = f" ({self.best['company']})" if self.best["company"] else ""
@@ -51,7 +56,15 @@ def summarize(conn: sqlite3.Connection, since: str) -> Summary:
         "SELECT v.title, v.company, s.score, s.best_track FROM vacancies v "
         f"JOIN scores s ON s.vacancy_id = v.id WHERE {_WAITING} ORDER BY s.score DESC LIMIT 1"
     ).fetchone()
-    return Summary(found, passed, to_review, best)
+    markets = {}
+    if conn.execute("SELECT 1 FROM vacancies WHERE market != 'cz' LIMIT 1").fetchone():
+        rows = conn.execute(
+            f"SELECT market, SUM(first_seen_at >= ? AND {_WAITING}), SUM({_WAITING}) "
+            "FROM vacancies v GROUP BY market ORDER BY market",
+            (since,),
+        )
+        markets = {r[0]: (r[1] or 0, r[2] or 0) for r in rows}
+    return Summary(found, passed, to_review, best, markets)
 
 
 def notify_command(title: str, message: str) -> list[str]:
@@ -94,11 +107,14 @@ class EmailConfig:
 
 
 def waiting(conn: sqlite3.Connection, limit: int = 15) -> list[sqlite3.Row]:
-    """Vacancies waiting for a decision, best score first (unscored last)."""
+    """Vacancies waiting for a decision: up to `limit` per market, best score first
+    (unscored last), Czech market first."""
     return conn.execute(
-        "SELECT v.title, v.company, v.city, v.url, s.score, s.best_track, s.entry_barrier "
-        f"FROM vacancies v LEFT JOIN scores s ON s.vacancy_id = v.id WHERE {_WAITING} "
-        "ORDER BY s.score IS NULL, s.score DESC, v.id DESC LIMIT ?",
+        "SELECT * FROM (SELECT v.title, v.company, v.city, v.url, v.market, "
+        "s.score, s.best_track, s.entry_barrier, ROW_NUMBER() OVER (PARTITION BY v.market "
+        "ORDER BY s.score IS NULL, s.score DESC, v.id DESC) AS rank "
+        f"FROM vacancies v LEFT JOIN scores s ON s.vacancy_id = v.id WHERE {_WAITING}) "
+        "WHERE rank <= ? ORDER BY market, rank",
         (limit,),
     ).fetchall()
 
@@ -113,7 +129,11 @@ def email_body(summary: Summary, rows: list[sqlite3.Row], errors: bool = False) 
         lines += ["Во время сбора или оценки были ошибки: ~/Library/Logs/jobservice-report.log", ""]
     if rows:
         lines.append("Ждут проверки:")
-        for i, r in enumerate(rows, start=1):
+        market = None
+        for r in rows:
+            if summary.markets and r["market"] != market:
+                market = r["market"]
+                lines += ["", f"{MARKET_LABELS.get(market, market)}:"]
             if r["score"] is None:
                 score = "без оценки"
             else:
@@ -121,7 +141,7 @@ def email_body(summary: Summary, rows: list[sqlite3.Row], errors: bool = False) 
                 barrier = BARRIER_LABELS.get(r["entry_barrier"], r["entry_barrier"])
                 score = f"{track} {r['score']}, порог {barrier}"
             where = ", ".join(x for x in (r["company"], r["city"]) if x)
-            lines += [f"{i}. {r['title']}" + (f" ({where})" if where else ""),
+            lines += [f"{r['rank']}. {r['title']}" + (f" ({where})" if where else ""),
                       f"   {score}", f"   {r['url']}"]  # fmt: skip
         if summary.to_review > len(rows):
             lines.append(f"...и ещё {summary.to_review - len(rows)}.")

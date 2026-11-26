@@ -198,3 +198,39 @@ def test_cli_report_falls_back_to_notification_when_email_fails(tmp_path, monkey
 
     code, notes = _cli_with_email(tmp_path, monkeypatch, fail)
     assert code == 0 and notes[0].endswith("Письмо не отправилось, см. лог.")
+
+
+# ---- markets ------------------------------------------------------------------------------------
+
+
+def add_ua(conn, ext, title):
+    db.upsert(conn, Vacancy(source="dou", external_id=ext, title=title, url=f"ua/{ext}",
+                            company="UA", market="ua"))  # fmt: skip
+
+
+def test_summary_without_ua_vacancies_has_no_market_lines():
+    conn = db.connect(":memory:")
+    add(conn, "1", "QA")
+    s = report.summarize(conn, since="2000-01-01")
+    assert s.markets == {} and "Чехия" not in s.message()
+
+
+def test_summary_and_email_split_by_market():
+    conn = db.connect(":memory:")
+    for i in range(3):
+        add(conn, f"c{i}", f"CZ job {i}", "Firm")
+    add_ua(conn, "u1", "UA job")
+    save(conn, 4, 70)
+    s = report.summarize(conn, since="2000-01-01")
+    assert s.markets == {"cz": (3, 3), "ua": (1, 1)}
+    assert s.message() == (
+        "Новых вакансий: 4, подходят: 4. Ждут проверки: 4. Чехия: подходят 3, ждут 3. "
+        "Украина remote: подходят 1, ждут 1. Лучшая: QA 70, UA job (UA)."
+    )
+
+    # the limit is per market, so Czech vacancies cannot crowd out the Ukrainian ones
+    rows = report.waiting(conn, limit=2)
+    assert [r["market"] for r in rows] == ["cz", "cz", "ua"]
+    body = report.email_body(s, rows)
+    cz, ua = body.index("\nЧехия:\n"), body.index("\nУкраина remote:\n")
+    assert cz < body.index("1. CZ job 2") < ua < body.index("1. UA job (UA)\n   QA 70")

@@ -278,3 +278,29 @@ def test_apply_filters_uses_scores_and_hard_reasons_win():
     assert reasons == {1: None, 2: "Оценка: балл 30 < 50", 3: "Уровень: senior (в названии)",
                        4: None}  # fmt: skip
     assert stats["passed"] == 2
+
+
+# ---- markets ------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("market", "eur", "rejected"),
+    [
+        ("ua", 1200, False),  # above the Ukrainian minimum (1000)
+        ("ua", 900, True),
+        ("cz", 1200, True),  # below the Czech minimum (1500)
+        (None, 1200, True),  # rows without the column count as Czech
+    ],
+)
+def test_salary_minimum_depends_on_market(market, eur, rejected):
+    cfg = FilterConfig(min_salary_eur=1500, min_salary_eur_ua=1000)
+    r = row(salary_max=eur, salary_currency="EUR", salary_period="month")
+    if market:
+        r["market"] = market
+    assert bool(check_salary(r, cfg)) is rejected
+
+
+def test_ua_salary_minimum_from_env():
+    assert FilterConfig.from_env({"JOBS_MIN_SALARY_EUR_UA": "800"}).min_salary_eur_ua == 800
+    assert FilterConfig.from_env({"JOBS_MIN_SALARY_EUR_UA": ""}).min_salary_eur_ua is None
+    assert FilterConfig.from_env({}).min_salary_eur_ua == 1000

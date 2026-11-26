@@ -24,6 +24,7 @@ class FilterConfig:
     city: str | None = "Praha"
     allow_remote: bool = True
     min_salary_eur: float | None = 1500
+    min_salary_eur_ua: float | None = 1000  # Ukrainian remote market
     eur_czk: float = 24.4
     # Languages the candidate can work in; anything else explicitly required rejects.
     known_languages: set[str] = field(
@@ -42,6 +43,9 @@ class FilterConfig:
             cfg.allow_remote = env["JOBS_INCLUDE_REMOTE"].strip().lower() in ("1", "true", "yes")
         if env.get("JOBS_MIN_SALARY_EUR", "").strip():
             cfg.min_salary_eur = float(env["JOBS_MIN_SALARY_EUR"])
+        if "JOBS_MIN_SALARY_EUR_UA" in env:
+            value = env["JOBS_MIN_SALARY_EUR_UA"].strip()
+            cfg.min_salary_eur_ua = float(value) if value else None
         if env.get("JOBS_EUR_CZK", "").strip():
             cfg.eur_czk = float(env["JOBS_EUR_CZK"])
         if "JOBS_MIN_SCORE" in env:
@@ -89,13 +93,15 @@ def monthly_eur(amount: float, currency: str | None, period: str | None, eur_czk
 
 
 def check_salary(row: Mapping, cfg: FilterConfig) -> str | None:
-    if not cfg.min_salary_eur:
+    ua = dict(row).get("market") == "ua"
+    minimum = cfg.min_salary_eur_ua if ua else cfg.min_salary_eur
+    if not minimum:
         return None
     top = row["salary_max"] or row["salary_min"]
     if not top:
         return None
     eur = monthly_eur(top, row["salary_currency"], row["salary_period"], cfg.eur_czk)
-    if eur is not None and eur < cfg.min_salary_eur:
+    if eur is not None and eur < minimum:
         return f"Зарплата до {eur:,.0f} €/мес".replace(",", " ")
     return None
 

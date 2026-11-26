@@ -85,7 +85,10 @@ _MIGRATIONS = {
     "languages": "ALTER TABLE vacancies ADD COLUMN languages TEXT",
     # Why the hard filters rejected this vacancy (None = passed). Recomputed by filters.py.
     "filter_reason": "ALTER TABLE vacancies ADD COLUMN filter_reason TEXT",
+    "market": "ALTER TABLE vacancies ADD COLUMN market TEXT NOT NULL DEFAULT 'cz'",
 }
+
+MARKETS = ("cz", "ua")
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -134,6 +137,7 @@ VIEWS = (*STATUSES, FILTERED)
 @dataclass(slots=True)
 class Filters:
     status: str | None = "new"  # a value from VIEWS; None = everything
+    market: str | None = None  # a value from MARKETS; None = all markets
     source: str | None = None
     city: str | None = None
     q: str | None = None  # substring of title, company or description
@@ -148,6 +152,9 @@ def _where(f: Filters, *, with_status: bool = True) -> tuple[str, list]:
         clauses.append(_STATUS_SQL[f.status])
     elif with_status and not f.include_filtered:
         clauses.append(f"NOT ({_STATUS_SQL[FILTERED]})")
+    if f.market:
+        clauses.append("market = ?")
+        params.append(f.market)
     if f.source:
         clauses.append("source = ?")
         params.append(f.source)
@@ -210,6 +217,14 @@ def status_counts(conn: sqlite3.Connection, f: Filters) -> dict[str, int]:
     where, params = _where(f, with_status=False)
     rows = conn.execute(f"SELECT {_VIEW_SQL}, COUNT(*) FROM vacancies{where} GROUP BY 1", params)
     return dict.fromkeys(VIEWS, 0) | {r[0]: r[1] for r in rows}
+
+
+def market_counts(conn: sqlite3.Connection) -> dict[str, int]:
+    """New vacancies waiting for a decision, per market."""
+    rows = conn.execute(
+        f"SELECT market, COUNT(*) FROM vacancies WHERE {_STATUS_SQL['new']} GROUP BY 1"
+    )
+    return dict.fromkeys(MARKETS, 0) | {r[0]: r[1] for r in rows}
 
 
 def filter_reason_counts(conn: sqlite3.Connection) -> dict[str, int]:

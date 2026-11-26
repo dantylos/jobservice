@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from jobservice import db, pitch, scoring
-from jobservice.db import FILTERED, STATUSES, Filters
+from jobservice.db import FILTERED, MARKETS, STATUSES, Filters
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ STATUS_LABELS = {
     "skip": "Пропущенные",
     FILTERED: "Отсеянные",
 }
+MARKET_LABELS = {"cz": "Чехия", "ua": "Украина (remote)"}
 _PERIODS = {"month": "мес", "hour": "час", "day": "день", "year": "год", "week": "нед"}
 _MODES = {"remote": "удалённо", "hybrid": "гибрид", "onsite": "в офисе"}
 SOURCE_LABELS = {"jobscz": "Jobs.cz", "startupjobs": "StartupJobs"}
@@ -52,8 +53,10 @@ def _first(params: dict[str, list[str]], key: str) -> str | None:
 
 def filters_from(params: dict[str, list[str]], prefix: str = "") -> Filters:
     status = _first(params, prefix + "status") or "new"
+    market = _first(params, prefix + "market")
     return Filters(
         status=None if status == "all" else status if status in STATUSES else "new",
+        market=market if market in MARKETS else "cz",
         source=_first(params, prefix + "source"),
         city=_first(params, prefix + "city"),
         q=_first(params, prefix + "q"),
@@ -63,7 +66,8 @@ def filters_from(params: dict[str, list[str]], prefix: str = "") -> Filters:
 
 
 def filters_qs(f: Filters, **override: str) -> str:
-    values = {"status": f.status or "all", "source": f.source, "city": f.city, "q": f.q,
+    values = {"market": None if f.market == "cz" else f.market, "status": f.status or "all",
+              "source": f.source, "city": f.city, "q": f.q,
               "sort": None if f.sort == "date" else f.sort}  # fmt: skip
     values |= override
     return urlencode({k: v for k, v in values.items() if v})
@@ -167,6 +171,7 @@ h1 { font-size: 22px; margin: 0 0 16px; } h1 a { color: inherit; }
 .tabs a { padding:6px 12px; border-radius:999px; background:var(--card); color:var(--fg); }
 .tabs a.on { background:var(--fg); color:var(--bg); }
 .tabs .n { color:var(--muted); margin-left:4px; } .tabs a.on .n { color:inherit; opacity:.7; }
+.tabs.markets a { border-radius:8px; font-weight:600; }
 form.filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
 input, select, button { font:inherit; padding:6px 10px; border:1px solid var(--line);
   border-radius:8px; background:var(--bg); color:var(--fg); }
@@ -258,6 +263,15 @@ def page(title: str, body: str, script: str = "") -> bytes:
 
 
 def render_list(conn, f: Filters) -> bytes:
+    # Market tabs: the number is the new vacancies waiting for a decision there.
+    waiting = db.market_counts(conn)
+    # Switching market starts from its "new" list; only the sort order carries over.
+    markets = "".join(
+        f'<a class="{"on" if f.market == m else ""}" '
+        f'href="/?{filters_qs(Filters(market=m, sort=f.sort), market=m)}">'
+        f'{MARKET_LABELS[m]}<span class="n">{waiting[m]}</span></a>'
+        for m in MARKETS
+    )
     counts = db.status_counts(conn, f)
     tabs = []
     # Vacancies rejected by the filters are not shown at all (they stay in the database).
@@ -280,6 +294,7 @@ def render_list(conn, f: Filters) -> bytes:
     )
     filters = (
         '<form class="filters" method="get" action="/">'
+        f'<input type="hidden" name="market" value="{_e(f.market)}">'
         f'<input type="hidden" name="status" value="{_e(f.status or "all")}">'
         f'<input name="q" value="{_e(f.q)}" placeholder="Поиск: должность, компания, текст">'
         f'<input name="city" value="{_e(f.city)}" placeholder="Город">'
@@ -307,7 +322,8 @@ def render_list(conn, f: Filters) -> bytes:
         if items
         else ('<p class="empty">Ничего не найдено.</p>')
     )
-    return page("Вакансии", f'<h1><a href="/">Вакансии</a></h1><nav class="tabs">'
+    return page("Вакансии", f'<h1><a href="/">Вакансии</a></h1>'
+                f'<nav class="tabs markets">{markets}</nav><nav class="tabs">'
                 f'{"".join(tabs)}</nav>{filters}{listing}')  # fmt: skip
 
 

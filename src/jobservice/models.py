@@ -23,6 +23,8 @@ class Vacancy:
     work_mode: str | None = None  # comma-separated: "remote", "hybrid", "onsite"
     seniority: str | None = None  # comma-separated: "junior", "medior", "senior"
     languages: str | None = None  # comma-separated "language:level", e.g. "czech:advanced"
+    # Job market the vacancy belongs to: "cz" (Czech sites) or "ua" (Ukrainian remote sites).
+    market: str = "cz"
 
 
 @dataclass(slots=True)

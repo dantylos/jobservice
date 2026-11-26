@@ -17,6 +17,8 @@ apply, later or skip.
 2. **Filter.** Hard rules reject an ad only on clear evidence, so an ad with missing data passes.
    Rejected ads are hidden from the review page but kept with the reason, never deleted
    (`jobservice filter --stats` prints a summary).
+   Vacancies belong to a market, Czechia or Ukraine (remote), each with its own tab and
+   salary minimum (`JOBS_MIN_SALARY_EUR`, `JOBS_MIN_SALARY_EUR_UA`).
    - **Location:** a chosen city or remote work.
    - **Salary:** top of the range below a monthly minimum in EUR (CZK converted, hourly × 160).
    - **Seniority:** senior / lead / head / principal titles.
