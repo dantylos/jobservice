@@ -146,8 +146,10 @@ def test_command_has_no_tools_and_optional_model():
     assert cmd[cmd.index("--tools") + 1] == ""
     assert json.loads(cmd[cmd.index("--json-schema") + 1]) == {"type": "object"}
     assert "--model" not in cmd
-    cmd = scoring.ClaudeCodeRunner(model="sonnet").command("sys", {})
+    assert "--effort" not in cmd
+    cmd = scoring.ClaudeCodeRunner(model="sonnet", effort="medium").command("sys", {})
     assert cmd[cmd.index("--model") + 1] == "sonnet"
+    assert cmd[cmd.index("--effort") + 1] == "medium"
 
 
 def test_parse_output_success():
@@ -174,8 +176,11 @@ def test_parse_output_errors(code, stdout):
 def test_runner_reads_model_from_env(monkeypatch):
     monkeypatch.setenv("JOBS_SCORE_MODEL", "sonnet")
     assert scoring.runner_from_env().model == "sonnet"
+    monkeypatch.setenv("JOBS_SCORE_EFFORT", "medium")
+    assert scoring.runner_from_env().effort == "medium"
     monkeypatch.setenv("JOBS_SCORE_MODEL", "")
-    assert scoring.runner_from_env().model is None
+    monkeypatch.setenv("JOBS_SCORE_EFFORT", "")
+    assert (scoring.runner_from_env().model, scoring.runner_from_env().effort) == (None, None)
 
 
 def test_load_profile_rejects_empty(tmp_path):

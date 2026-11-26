@@ -167,8 +167,15 @@ Runner = Callable[[str, str, dict], dict]
 class ClaudeCodeRunner:
     """Runs `claude -p` with no tools and structured output; uses the local Claude Code login."""
 
-    def __init__(self, model: str | None = None, timeout: float = 300, binary: str = "claude"):
+    def __init__(
+        self,
+        model: str | None = None,
+        timeout: float = 300,
+        binary: str = "claude",
+        effort: str | None = None,
+    ):
         self.model = model
+        self.effort = effort  # low / medium / high / xhigh / max; None = Claude Code's default
         self.timeout = timeout
         self.binary = binary
         self.model_used: str | None = None
@@ -190,6 +197,8 @@ class ClaudeCodeRunner:
         ]
         if self.model:
             cmd += ["--model", self.model]
+        if self.effort:
+            cmd += ["--effort", self.effort]
         return cmd
 
     def __call__(self, system: str, prompt: str, schema: dict) -> dict:
@@ -220,7 +229,11 @@ class ClaudeCodeRunner:
 
 
 def runner_from_env() -> ClaudeCodeRunner:
-    return ClaudeCodeRunner(model=os.getenv("JOBS_SCORE_MODEL") or None)
+    """Used for both scoring and pitches."""
+    return ClaudeCodeRunner(
+        model=os.getenv("JOBS_SCORE_MODEL") or None,
+        effort=os.getenv("JOBS_SCORE_EFFORT") or None,
+    )
 
 
 def load_profile(path: str | Path) -> str:
