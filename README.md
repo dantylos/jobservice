@@ -31,7 +31,9 @@ apply, later or skip.
    headless mode (`claude -p`, no tools, JSON-schema output). The model returns a 0-100 score
    per track, the entry barrier, and up to three points on why the ad fits and what is missing.
    Scores are stored with a hash of the prompt version, profile and ad text, so only new or
-   changed ads are scored again.
+   changed ads are scored again. Ukrainian remote ads get extra, separately versioned rules:
+   a need to be in Ukraine or to work as a Ukrainian sole proprietor (FOP) is flagged, not
+   penalised.
 4. **Review.** `jobservice serve` opens a local page (127.0.0.1 only) with tabs for new, apply,
    later and skipped ads, text search, sorting by overall or per-track score or by entry barrier,
    and keyboard shortcuts: **A** apply, **L** later, **S** skip with a reason. Opening an ad

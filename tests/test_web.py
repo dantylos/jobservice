@@ -337,3 +337,15 @@ def test_decision_in_ua_tab_moves_to_next_ua_vacancy(app):
                                  form={"status": "skip", "f_market": "ua"})  # fmt: skip
     assert status.startswith("303")
     assert headers["Location"].startswith("/v/4?") and "market=ua" in headers["Location"]
+
+
+def test_list_marks_applicant_location(app):
+    app, path = app
+    conn = db.connect(path)
+    db.upsert(conn, Vacancy(source="djinni", external_id="d1", title="UA only job",
+                            url="https://ua/d1", market="ua", applicant_location="UA"))  # fmt: skip
+    conn.close()
+    _, _, html = request(app, "GET", "/", "market=ua")
+    assert "UA only job" in html and "· кандидаты из: UA</div>" in html
+    _, _, html = request(app, "GET", "/")
+    assert "кандидаты из" not in html  # Czech rows have no location stated

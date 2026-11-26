@@ -234,3 +234,53 @@ def test_cli_score_applies_score_filter(tmp_path, monkeypatch):
     assert main(["score", "--db", str(path), "--profile", str(tmp_path / "p.md")]) == 0
     reason = db.connect(path).execute("SELECT filter_reason FROM vacancies").fetchone()[0]
     assert reason == "Оценка: балл 82 < 90"
+
+
+# ---- Ukrainian remote market ----------------------------------------------------------------
+
+
+def _ua_row(**kw):
+    return {"title": "QA", "company": "UA Firm", "city": None, "work_mode": "remote",
+            "seniority": None, "languages": None, "salary_min": None, "salary_max": None,
+            "salary_currency": None, "salary_period": None, "description_text": "Шукаємо QA",
+            "market": "ua", "applicant_location": "UA"} | kw  # fmt: skip
+
+
+def test_czech_hash_is_unchanged_by_the_ua_rules():
+    import hashlib
+
+    row = _ua_row(market="cz", applicant_location=None)
+    legacy = hashlib.sha256("\x00".join(("1", PROFILE, "QA", "Шукаємо QA")).encode())
+    assert scoring.input_hash(row, PROFILE) == legacy.hexdigest()[:16]  # no Czech re-scoring
+    assert scoring.input_hash(_ua_row(), PROFILE) != scoring.input_hash(row, PROFILE)
+    assert scoring.system_prompt(row) == scoring.SYSTEM_PROMPT
+
+
+def test_ua_prompt_marks_location_requirements_without_penalty():
+    row = _ua_row()
+    assert scoring.prompt_version(row) == "1+ua1"
+    system = scoring.system_prompt(row)
+    assert system.startswith(scoring.SYSTEM_PROMPT) and "ФОП" in system
+    assert "do not lower the scores" in system
+    assert "applicants must live in (stated by the job board): UA" in scoring.vacancy_prompt(
+        row, PROFILE
+    )
+
+
+def test_score_pending_uses_ua_prompt_and_stores_its_version(conn):
+    db.upsert(conn, Vacancy(source="dou", external_id="u1", title="UA QA", url="https://ua/1",
+                            market="ua", description_text="Шукаємо QA"))  # fmt: skip
+    systems = []
+
+    class Recording(FakeRunner):
+        def __call__(self, system, prompt, schema):
+            systems.append(system)
+            return super().__call__(system, prompt, schema)
+
+    scoring.score_pending(conn, Recording([GOOD] * 4), PROFILE)
+    stored = dict(conn.execute("SELECT vacancy_id, prompt_version FROM scores").fetchall())
+    ua_id = conn.execute("SELECT id FROM vacancies WHERE market = 'ua'").fetchone()[0]
+    assert stored[ua_id] == "1+ua1"
+    assert {v for k, v in stored.items() if k != ua_id} == {"1"}
+    assert sum("ФОП" in s for s in systems) == 1
+    assert scoring.pending(conn, PROFILE) == []  # nothing left: hashes match the versions

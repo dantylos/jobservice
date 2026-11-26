@@ -316,6 +316,8 @@ def render_list(conn, f: Filters) -> bytes:
         if view != "new" and f.status is None:
             badge = f' <span class="badge s-{view}">{STATUS_LABELS[view]}</span>'
         reason = f" · {_e(r['status_reason'])}" if r["status_reason"] else ""
+        if r["applicant_location"]:  # e.g. "UA": the employer wants applicants living there
+            reason += f" · кандидаты из: {_e(r['applicant_location'])}"
         items.append(
             f'<li><a class="t" href="/v/{r["id"]}?{filters_qs(f)}">{_e(r["title"])}</a>'
             f"{_score_badge(r, f.sort)}{badge}"

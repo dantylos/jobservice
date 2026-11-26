@@ -210,7 +210,7 @@ def list_vacancies(conn: sqlite3.Connection, f: Filters, limit: int = 500) -> li
     where, params = _where(f)
     sql = (
         "SELECT id, source, title, company, city, published_at, published_raw, status, "
-        f"status_reason, filter_reason, {_SCORE_COLUMNS}"
+        f"status_reason, filter_reason, applicant_location, {_SCORE_COLUMNS}"
         + _FROM
         + where
         + SORTS.get(f.sort, _ORDER)

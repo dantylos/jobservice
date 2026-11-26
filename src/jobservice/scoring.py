@@ -18,6 +18,9 @@ log = logging.getLogger(__name__)
 
 # Bump when the prompt or schema changes: stored scores with another version get redone.
 PROMPT_VERSION = "1"
+# Extra rules for the Ukrainian remote market. Versioned separately, so changing them re-scores
+# only Ukrainian vacancies; Czech ones keep their hash and are not re-scored.
+UA_PROMPT_VERSION = "ua1"
 TRACKS = ("ai", "qa", "hr")
 BARRIERS = ("low", "medium", "high")
 MAX_DESCRIPTION_CHARS = 8000
@@ -60,6 +63,32 @@ entry_barrier: how hard the ad is to get into for an entry-level candidate in ge
 fits / gaps: up to 3 short points each, in Russian, concrete (name the requirement and the
 matching or missing evidence). Do not invent facts that are not in the profile or the ad.
 """
+
+
+UA_ADDENDUM = """
+This ad is from a Ukrainian job board (DOU.ua or Djinni) and is a remote job. The candidate lives
+in Prague, Czechia (see the profile) and would work remotely from there.
+- Ukrainian or Russian as the ad's language or as a requirement is not a gap: the profile lists
+  both as native. Salaries in USD are normal for this market.
+- If the ad requires the candidate to be physically in Ukraine, to register as a Ukrainian sole
+  proprietor (FOP / ФОП), to have Ukrainian tax residency, or to come to an office in Ukraine,
+  make that the FIRST item of gaps, in Russian (e.g. "Нужно находиться в Украине", "Работа через
+  ФОП"). Only mark it: do not lower the scores or raise entry_barrier because of it.
+- "applicants must live in" (if given) is what the job board states. Do not lower the scores
+  because of it either; it is shown to the candidate separately.
+"""
+
+
+def is_ua(row) -> bool:
+    return dict(row).get("market") == "ua"
+
+
+def prompt_version(row) -> str:
+    return f"{PROMPT_VERSION}+{UA_PROMPT_VERSION}" if is_ua(row) else PROMPT_VERSION
+
+
+def system_prompt(row) -> str:
+    return SYSTEM_PROMPT + UA_ADDENDUM if is_ua(row) else SYSTEM_PROMPT
 
 
 @dataclass(slots=True)
@@ -115,6 +144,7 @@ def vacancy_prompt(row: sqlite3.Row | dict, profile: str) -> str:
         "seniority (parsed by the job board)": row["seniority"],
         "languages (parsed by the job board)": row["languages"],
         "salary": salary,
+        "applicants must live in (stated by the job board)": dict(row).get("applicant_location"),
     }
     lines = [f"{k}: {v}" for k, v in meta.items() if v]
     description = (row["description_text"] or "")[:MAX_DESCRIPTION_CHARS]
@@ -126,7 +156,7 @@ def vacancy_prompt(row: sqlite3.Row | dict, profile: str) -> str:
 
 def input_hash(row: sqlite3.Row | dict, profile: str) -> str:
     """Changes when the prompt version, the profile or the ad text changes."""
-    parts = (PROMPT_VERSION, profile, row["title"] or "", row["description_text"] or "")
+    parts = (prompt_version(row), profile, row["title"] or "", row["description_text"] or "")
     return hashlib.sha256("\x00".join(parts).encode()).hexdigest()[:16]
 
 
@@ -204,7 +234,12 @@ def load_profile(path: str | Path) -> str:
 
 
 def save_score(
-    conn: sqlite3.Connection, vacancy_id: int, s: Score, model: str | None, ihash: str
+    conn: sqlite3.Connection,
+    vacancy_id: int,
+    s: Score,
+    model: str | None,
+    ihash: str,
+    version: str = PROMPT_VERSION,
 ) -> None:
     conn.execute(
         "INSERT OR REPLACE INTO scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -219,7 +254,7 @@ def save_score(
             json.dumps(s.fits, ensure_ascii=False),
             json.dumps(s.gaps, ensure_ascii=False),
             model,
-            PROMPT_VERSION,
+            version,
             ihash,
             datetime.now(UTC).isoformat(timespec="seconds"),
         ),
@@ -256,7 +291,7 @@ def score_pending(
     streak = 0
     for row in todo:
         try:
-            s = parse_score(runner(SYSTEM_PROMPT, vacancy_prompt(row, profile), SCHEMA))
+            s = parse_score(runner(system_prompt(row), vacancy_prompt(row, profile), SCHEMA))
         except (RuntimeError, ValueError, subprocess.TimeoutExpired) as e:
             stats["failed"] += 1
             streak += 1
@@ -267,7 +302,7 @@ def score_pending(
             continue
         streak = 0
         model = getattr(runner, "model_used", None)
-        save_score(conn, row["id"], s, model, input_hash(row, profile))
+        save_score(conn, row["id"], s, model, input_hash(row, profile), prompt_version(row))
         stats["scored"] += 1
         log.info("%3d %-2s %s | %s", s.score, s.best_track, row["title"], row["company"] or "")
     return stats

@@ -9,8 +9,8 @@ from datetime import UTC, datetime
 
 from jobservice.scoring import TRACKS, Runner
 
-PROMPT_VERSION = "1"
-LANGUAGES = ("cs", "en")
+PROMPT_VERSION = "2"
+LANGUAGES = ("cs", "en", "uk", "ru")
 MAX_CHARS = 2000
 MAX_DESCRIPTION_CHARS = 8000
 
@@ -30,8 +30,9 @@ vpřed?" ("How can I move your company forward?"). It works as a short cover let
 candidate profile (three base CVs for three career tracks plus preferences) and one job ad.
 
 Rules:
-- Language: the language the job ad is written in. Czech ad -> Czech ("cs"), otherwise English
-  ("en"). Write natural, simple, correct Czech; no stiff formalities.
+- Language: the language the job ad is written in. Czech ad -> Czech ("cs"), Ukrainian ad ->
+  Ukrainian ("uk"), Russian ad -> Russian ("ru"), otherwise English ("en"). A mixed ad: the
+  language of most of its text. Write natural, simple, correct language; no stiff formalities.
 - If you write in Czech, include one plain sentence saying the candidate works in English and
   their Czech is at A2-B1 level and improving. Never imply better Czech than that.
 - Use the CV of the track that fits this ad best (a hint may be given). Pick the 1-2 projects or
@@ -40,7 +41,8 @@ Rules:
 - Say specifically what the candidate would do for this company in the first months, based on
   the ad text only. Do not invent facts about the company.
 - One short line on practicalities: available immediately, full-time, no work permit or
-  sponsorship needed.
+  sponsorship needed. For a remote job from a Ukrainian board (marked in the input) say instead:
+  available immediately, full-time, working remotely from Prague (CET).
 - 600-1100 characters, 2-4 short paragraphs separated by blank lines, plain text, no markdown,
   no placeholders, no greeting with an unknown name, no signature block. First person.
 - Avoid clichés ("passionate", "team player", "I am writing to apply").
@@ -68,6 +70,8 @@ def parse_pitch(data: dict) -> Pitch:
 def pitch_prompt(row, profile: str) -> str:
     track = dict(row).get("best_track")
     hint = f"Best-fitting track by an earlier screening: {track}\n\n" if track in TRACKS else ""
+    if dict(row).get("market") == "ua":
+        hint += "Market: remote job from a Ukrainian job board.\n\n"
     description = (row["description_text"] or "")[:MAX_DESCRIPTION_CHARS]
     return (
         f"<candidate_profile>\n{profile.strip()}\n</candidate_profile>\n\n{hint}"

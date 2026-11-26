@@ -156,3 +156,17 @@ def test_no_auto_generation_for_skipped_or_filtered(setup, skipped):
     app, _ = make_app(setup)
     _, _, html = request(app, "GET", "/v/1")
     assert 'data-auto="0"' in html and "Нажмите «Сгенерировать»" in html
+
+
+@pytest.mark.parametrize("lang", ["uk", "ru"])
+def test_ukrainian_and_russian_pitches_are_accepted(lang):
+    assert pitch.parse_pitch({"language": lang, "text": "Текст"}).language == lang
+
+
+def test_ua_market_hint_and_language_rules():
+    row = {"title": "QA", "company": "UA", "city": None, "description_text": "Шукаємо QA",
+           "best_track": "qa", "market": "ua"}  # fmt: skip
+    assert "Market: remote job from a Ukrainian job board." in pitch.pitch_prompt(row, PROFILE)
+    assert "Market:" not in pitch.pitch_prompt({**row, "market": "cz"}, PROFILE)
+    assert 'Ukrainian ad ->\n  Ukrainian ("uk")' in pitch.SYSTEM_PROMPT
+    assert "remotely from Prague" in pitch.SYSTEM_PROMPT
