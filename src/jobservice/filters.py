@@ -26,6 +26,7 @@ class FilterConfig:
     min_salary_eur: float | None = 1500
     min_salary_eur_ua: float | None = 1000  # Ukrainian remote market
     eur_czk: float = 24.4
+    eur_usd: float = 1.10  # ECB reference rate on 2026-11-26: 1.0975
     # Languages the candidate can work in; anything else explicitly required rejects.
     known_languages: set[str] = field(
         default_factory=lambda: {"english", "russian", "ukrainian", "czech"}
@@ -48,6 +49,8 @@ class FilterConfig:
             cfg.min_salary_eur_ua = float(value) if value else None
         if env.get("JOBS_EUR_CZK", "").strip():
             cfg.eur_czk = float(env["JOBS_EUR_CZK"])
+        if env.get("JOBS_EUR_USD", "").strip():
+            cfg.eur_usd = float(env["JOBS_EUR_USD"])
         if "JOBS_MIN_SCORE" in env:
             value = env["JOBS_MIN_SCORE"].strip()
             cfg.min_score = int(value) if value else None
@@ -78,7 +81,13 @@ def check_location(row: Mapping, cfg: FilterConfig) -> str | None:
 # ---- salary ---------------------------------------------------------------------------
 
 
-def monthly_eur(amount: float, currency: str | None, period: str | None, eur_czk: float):
+def monthly_eur(
+    amount: float,
+    currency: str | None,
+    period: str | None,
+    eur_czk: float,
+    eur_usd: float | None = None,
+):
     factor = _PERIOD_TO_MONTH.get(period or "month")
     if factor is None:
         return None
@@ -88,6 +97,8 @@ def monthly_eur(amount: float, currency: str | None, period: str | None, eur_czk
             return monthly
         case "CZK":
             return monthly / eur_czk
+        case "USD" if eur_usd:
+            return monthly / eur_usd
         case _:
             return None  # unknown currency: don't judge
 
@@ -100,7 +111,7 @@ def check_salary(row: Mapping, cfg: FilterConfig) -> str | None:
     top = row["salary_max"] or row["salary_min"]
     if not top:
         return None
-    eur = monthly_eur(top, row["salary_currency"], row["salary_period"], cfg.eur_czk)
+    eur = monthly_eur(top, row["salary_currency"], row["salary_period"], cfg.eur_czk, cfg.eur_usd)
     if eur is not None and eur < minimum:
         return f"Зарплата до {eur:,.0f} €/мес".replace(",", " ")
     return None

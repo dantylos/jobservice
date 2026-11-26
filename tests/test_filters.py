@@ -62,7 +62,8 @@ def test_monthly_eur():
         (8, 9, "EUR", "hour", True),  # 9 × 160 = 1440 €
         (200, 300, "CZK", "hour", False),  # 300 × 160 / 25 = 1920 €
         (None, None, None, None, False),  # no salary: passes
-        (1000, 1200, "USD", "month", False),  # unknown currency: passes
+        (1000, 1200, "GBP", "month", False),  # unknown currency: passes
+        (1000, 1200, "USD", "month", True),  # $1200 = 1091 € < 1500 €
     ],
 )
 def test_salary(low, high, cur, period, rejected):
