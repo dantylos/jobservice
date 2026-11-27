@@ -84,6 +84,7 @@ def apply_detail(v: Vacancy, posting: dict) -> None:
 
 class NoFluffJobs:
     name = "nofluffjobs"
+    enabled = True
     request_delay = 3.0  # seconds; NoFluffJobs throttled (429) at 1 s
     max_failures = 3  # in a row: the site is probably blocking, stop until next run
 

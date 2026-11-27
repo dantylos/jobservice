@@ -129,6 +129,7 @@ def _env_list(name: str, default: tuple[str, ...]) -> list[str]:
 
 class Djinni:
     name = "djinni"
+    enabled = True
     # The feed always has the description; the page is only needed while the company is unknown.
     detail_column = "company"
 

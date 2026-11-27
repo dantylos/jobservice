@@ -96,7 +96,8 @@ every push.
 - [x] Ukrainian remote vacancies from DOU.ua and Djinni (RSS)
 - [x] Hard filters and duplicate merging
 - [x] Local review page
-- [x] NoFluffJobs, EU Remote Jobs, Next Level Jobs
+- [x] NoFluffJobs (EU Remote Jobs and Next Level Jobs are off by default: slow, few junior fits;
+  `jobservice collect --source euremotejobs` still runs them)
 - [ ] More sources: Prace.cz, e-mail job alerts
 - [x] LLM scoring of each ad against my profile, with "why it fits / what is missing"
 - [ ] Tailored CV (DOCX + PDF) and cover letter for approved ads

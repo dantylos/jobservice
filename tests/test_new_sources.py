@@ -194,3 +194,8 @@ def test_titles_are_unescaped():
     assert v.title == "Product Engineer – Integrations & AI"
     page = '<script type="application/ld+json">{"@type": "JobPosting", "title": "QA &amp; Test"}</script>'  # noqa: E501
     assert nlj.from_page("1", "u", page).title == "QA & Test"
+
+
+def test_slow_sites_are_off_by_default():
+    enabled = {n for n, cls in SOURCES.items() if cls.enabled}
+    assert enabled == {"jobscz", "startupjobs", "dou", "djinni", "nofluffjobs"}

@@ -103,7 +103,7 @@ def collect(args: argparse.Namespace) -> int:
     delay = args.delay if args.delay is not None else float(os.getenv("JOBS_REQUEST_DELAY", "1"))
     failed = False
     with HttpClient(delay=delay) as http:
-        for name in args.sources or sorted(SOURCES):
+        for name in args.sources or sorted(n for n, cls in SOURCES.items() if cls.enabled):
             source = SOURCES[name](http)
             # Some sites throttle sooner than others: a source may ask for a longer pause.
             http.delay = max(delay, getattr(source, "request_delay", 0))

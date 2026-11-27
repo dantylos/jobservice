@@ -67,6 +67,7 @@ def apply_detail(v: Vacancy, data: dict) -> None:
 
 class StartupJobs:
     name = "startupjobs"
+    enabled = True
 
     def __init__(self, http: HttpClient) -> None:
         self.http = http

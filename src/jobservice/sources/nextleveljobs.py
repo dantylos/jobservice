@@ -78,6 +78,9 @@ def from_page(job_id: str, url: str, page: str) -> Vacancy | None:
 
 class NextLevelJobs:
     name = "nextleveljobs"
+    # Off by default (2026-11-27): slow, senior-only, no junior fits in Prague.
+    # Still runs with --source nextleveljobs.
+    enabled = False
     request_delay = 3.0  # seconds; NoFluffJobs throttled (429) at 1 s
     max_failures = 3  # in a row: the site is probably blocking, stop until next run
 

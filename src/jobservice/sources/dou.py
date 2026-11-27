@@ -124,6 +124,7 @@ def _env_list(name: str, default: tuple[str, ...]) -> list[str]:
 
 class Dou:
     name = "dou"
+    enabled = True
 
     def __init__(self, http: HttpClient) -> None:
         self.http = http

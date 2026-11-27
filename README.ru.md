@@ -140,6 +140,9 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.jobservice.report.pl
 - **Next Level Jobs** — карта сайта вакансий, уровень берётся со страницы. Не больше
   `JOBS_NEXTLEVELJOBS_MAX_PAGES` страниц за запуск: первые запуски догоняют несколько дней.
 
+EU Remote Jobs и Next Level Jobs по умолчанию выключены (медленные, подходящих junior почти
+нет); вручную: `uv run jobservice collect --source euremotejobs`.
+
 Вакансии этих сайтов попадают во вкладку «Чехия», а если работа в Украине или только для
 живущих там — в «Украина (remote)». Проходят только Прага или удалёнка, доступная из Чехии.
 

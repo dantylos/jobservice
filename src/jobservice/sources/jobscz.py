@@ -130,6 +130,7 @@ def parse_detail(html: str) -> Detail:
 
 class JobsCz:
     name = "jobscz"
+    enabled = True
 
     def __init__(self, http: HttpClient, today: date | None = None) -> None:
         self.http = http

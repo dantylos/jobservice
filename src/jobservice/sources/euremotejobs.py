@@ -70,6 +70,9 @@ def from_posting(slug: str, url: str, posting: dict) -> Vacancy:
 
 class EuRemoteJobs:
     name = "euremotejobs"
+    # Off by default (2026-11-27): slow, timeouts, almost no junior fits.
+    # Still runs with --source euremotejobs.
+    enabled = False
     request_delay = 3.0  # seconds; NoFluffJobs throttled (429) at 1 s
     max_failures = 3  # in a row: the site is probably blocking, stop until next run
 
